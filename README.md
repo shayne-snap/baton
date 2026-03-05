@@ -1,6 +1,6 @@
 # Baton
 
-Baton is a Go implementation of [Symphony](https://github.com/openai/symphony)’s distributed work orchestration platform.
+Baton is a Go implementation of [Symphony](https://github.com/openai/symphony)’.
 It follows the spec documented in [symphony/SPEC.md](https://github.com/openai/symphony) and is intended for teams that
 want a Go-native agent capable of running the same autonomous workflows that Symphony describes.
 
