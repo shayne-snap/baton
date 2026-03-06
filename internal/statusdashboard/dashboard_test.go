@@ -491,12 +491,23 @@ func loadSnapshotFixture(t *testing.T, name string) string {
 	if !ok {
 		t.Fatal("runtime caller unavailable")
 	}
-	path := filepath.Join(filepath.Dir(file), "..", "..", "..", "symphony", "elixir", "test", "fixtures", "status_dashboard_snapshots", name)
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read fixture %s: %v", path, err)
+
+	paths := []string{
+		filepath.Join(filepath.Dir(file), "testdata", "status_dashboard_snapshots", name),
+		// Back-compat for local setups that still rely on the sibling symphony repo.
+		filepath.Join(filepath.Dir(file), "..", "..", "..", "symphony", "elixir", "test", "fixtures", "status_dashboard_snapshots", name),
 	}
-	return string(raw)
+
+	var raw []byte
+	var err error
+	for _, path := range paths {
+		raw, err = os.ReadFile(path)
+		if err == nil {
+			return string(raw)
+		}
+	}
+	t.Fatalf("read fixture failed for %q: %v (tried: %s)", name, err, strings.Join(paths, ", "))
+	return ""
 }
 
 func stripANSI(value string) string {
