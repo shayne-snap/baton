@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"baton/internal/config"
 	"baton/internal/workflow"
@@ -117,6 +118,41 @@ func TestNormalizeIssueMarksUnassignedAsNotRouted(t *testing.T) {
 	issue := normalizeIssue(rawIssue, filter)
 	if issue.AssignedToWorker {
 		t.Fatal("expected issue not assigned to worker")
+	}
+}
+
+func TestNormalizeBranchNameSanitizesNonASCIISegments(t *testing.T) {
+	t.Parallel()
+
+	got := normalizeBranchName("linnana9808/bac-7-非英文分支名转英文分支名。", "BAC-7")
+	if got != "linnana9808/bac-7" {
+		t.Fatalf("expected sanitized branch name, got %q", got)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("expected valid utf8 output, got %q", got)
+	}
+	for _, r := range got {
+		if r > 127 {
+			t.Fatalf("expected ASCII-only branch name, got %q", got)
+		}
+	}
+}
+
+func TestNormalizeBranchNameFallsBackToIdentifierWhenNoASCIIRemains(t *testing.T) {
+	t.Parallel()
+
+	got := normalizeBranchName("纯中文分支", "BAC-7")
+	if got != "BAC-7" {
+		t.Fatalf("expected identifier fallback, got %q", got)
+	}
+}
+
+func TestNormalizeBranchNamePreservesSafeEnglishBranchNames(t *testing.T) {
+	t.Parallel()
+
+	got := normalizeBranchName("linnana9808/bac-7-fix-readme_v2", "BAC-7")
+	if got != "linnana9808/bac-7-fix-readme_v2" {
+		t.Fatalf("expected safe branch name to stay unchanged, got %q", got)
 	}
 }
 

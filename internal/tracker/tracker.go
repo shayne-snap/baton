@@ -545,15 +545,16 @@ func (c *linearClient) buildAssigneeFilter(ctx context.Context, assignee string)
 func normalizeIssue(issue map[string]any, filter *assigneeFilter) Issue {
 	assignee, _ := issue["assignee"].(map[string]any)
 	assigneeID := stringValue(assignee["id"])
+	identifier := stringValue(issue["identifier"])
 
 	return Issue{
 		ID:               stringValue(issue["id"]),
-		Identifier:       stringValue(issue["identifier"]),
+		Identifier:       identifier,
 		Title:            stringValue(issue["title"]),
 		Description:      stringValue(issue["description"]),
 		Priority:         parsePriority(issue["priority"]),
 		State:            nestedString(issue, "state", "name"),
-		BranchName:       stringValue(issue["branchName"]),
+		BranchName:       normalizeBranchName(stringValue(issue["branchName"]), identifier),
 		URL:              stringValue(issue["url"]),
 		AssigneeID:       assigneeID,
 		BlockedBy:        extractBlockers(issue),
@@ -562,6 +563,72 @@ func normalizeIssue(issue map[string]any, filter *assigneeFilter) Issue {
 		CreatedAt:        parseDateTime(issue["createdAt"]),
 		UpdatedAt:        parseDateTime(issue["updatedAt"]),
 	}
+}
+
+func normalizeBranchName(branchName string, identifier string) string {
+	raw := strings.TrimSpace(branchName)
+	if raw == "" {
+		return ""
+	}
+
+	parts := strings.Split(raw, "/")
+	sanitizedParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		sanitized := sanitizeBranchSegment(part)
+		if sanitized == "" {
+			continue
+		}
+		sanitizedParts = append(sanitizedParts, sanitized)
+	}
+	if len(sanitizedParts) > 0 {
+		return strings.Join(sanitizedParts, "/")
+	}
+
+	fallback := sanitizeBranchSegment(identifier)
+	if fallback != "" {
+		return fallback
+	}
+	return "issue"
+}
+
+func sanitizeBranchSegment(segment string) string {
+	trimmed := strings.TrimSpace(segment)
+	if trimmed == "" {
+		return ""
+	}
+
+	var builder strings.Builder
+	builder.Grow(len(trimmed))
+
+	var previous byte
+	for _, r := range trimmed {
+		switch {
+		case isASCIIAlphaNumeric(r):
+			builder.WriteRune(r)
+			previous = byte(r)
+		case r == '-' || r == '_' || r == '.':
+			current := byte(r)
+			if builder.Len() == 0 || previous == current {
+				continue
+			}
+			builder.WriteByte(current)
+			previous = current
+		default:
+			if builder.Len() == 0 || previous == '-' {
+				continue
+			}
+			builder.WriteByte('-')
+			previous = '-'
+		}
+	}
+
+	return strings.Trim(builder.String(), "-_.")
+}
+
+func isASCIIAlphaNumeric(value rune) bool {
+	return (value >= 'a' && value <= 'z') ||
+		(value >= 'A' && value <= 'Z') ||
+		(value >= '0' && value <= '9')
 }
 
 func assignedToWorker(assigneeID string, filter *assigneeFilter) bool {
