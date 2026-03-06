@@ -97,7 +97,7 @@ func run(parent context.Context, opts *options) error {
 		Logger:       logger,
 	})
 	if err != nil {
-		return fmt.Errorf("Failed to start Symphony with workflow %s: %v", expandedPath, err)
+		return fmt.Errorf("Failed to start Baton with workflow %s: %v", expandedPath, err)
 	}
 
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)

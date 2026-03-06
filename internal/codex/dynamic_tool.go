@@ -43,7 +43,7 @@ func ToolSpecs() []map[string]any {
 	return []map[string]any{
 		{
 			"name":        linearGraphQLTool,
-			"description": "Execute a raw GraphQL query or mutation against Linear using Symphony's configured auth.",
+			"description": "Execute a raw GraphQL query or mutation against Linear using Baton's configured auth.",
 			"inputSchema": map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -355,7 +355,7 @@ func toolErrorPayload(reason any) map[string]any {
 	case errors.Is(err, config.ErrMissingLinearAPIToken):
 		return map[string]any{
 			"error": map[string]any{
-				"message": "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
+				"message": "Baton is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
 			},
 		}
 	default:
