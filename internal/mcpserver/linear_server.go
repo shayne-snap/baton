@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,16 +16,19 @@ import (
 )
 
 const (
-	linearMCPServerName    = "baton-linear"
-	linearMCPServerVersion = "0.1.0"
-	linearMCPToolName      = "graphql"
-	mcpProtocolVersion     = "2024-11-05"
+	linearMCPServerName        = "baton-linear"
+	linearMCPServerVersion     = "0.1.0"
+	linearMCPToolName          = "graphql"
+	defaultMCPProtocolVersion  = "2025-11-25"
+	messageFormatContentLength = "content-length"
+	messageFormatJSONLine      = "json-line"
 )
 
 type linearServer struct {
 	in       *bufio.Reader
 	out      *bufio.Writer
 	executor *codex.DynamicToolExecutor
+	format   string
 }
 
 type jsonRPCRequest struct {
@@ -49,6 +53,10 @@ type jsonRPCResponse struct {
 type toolCallParams struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
+}
+
+type initializeParams struct {
+	ProtocolVersion string `json:"protocolVersion"`
 }
 
 func ServeLinearStdio(ctx context.Context, endpoint string, apiKey string) error {
@@ -111,8 +119,12 @@ func (s *linearServer) serve(ctx context.Context) error {
 func (s *linearServer) handleRequest(ctx context.Context, req jsonRPCRequest) (any, *jsonRPCError) {
 	switch req.Method {
 	case "initialize":
+		protocolVersion := requestedProtocolVersion(req.Params)
+		if protocolVersion == "" {
+			protocolVersion = defaultMCPProtocolVersion
+		}
 		return map[string]any{
-			"protocolVersion": mcpProtocolVersion,
+			"protocolVersion": protocolVersion,
 			"capabilities": map[string]any{
 				"tools": map[string]any{},
 			},
@@ -154,6 +166,57 @@ func (s *linearServer) handleRequest(ctx context.Context, req jsonRPCRequest) (a
 }
 
 func (s *linearServer) readMessage() ([]byte, error) {
+	if err := s.detectMessageFormat(); err != nil {
+		return nil, err
+	}
+	if s.format == messageFormatJSONLine {
+		return s.readJSONLineMessage()
+	}
+	return s.readContentLengthMessage()
+}
+
+func (s *linearServer) detectMessageFormat() error {
+	if s.format != "" {
+		return nil
+	}
+	for {
+		peeked, err := s.in.Peek(1)
+		if err != nil {
+			return err
+		}
+		switch peeked[0] {
+		case ' ', '\t', '\r', '\n':
+			if _, err := s.in.ReadByte(); err != nil {
+				return err
+			}
+		case '{', '[':
+			s.format = messageFormatJSONLine
+			return nil
+		default:
+			s.format = messageFormatContentLength
+			return nil
+		}
+	}
+}
+
+func (s *linearServer) readJSONLineMessage() ([]byte, error) {
+	for {
+		line, err := s.in.ReadBytes('\n')
+		if err != nil && !(err == io.EOF && len(line) > 0) {
+			return nil, err
+		}
+		payload := bytes.TrimSpace(line)
+		if len(payload) == 0 {
+			if err == io.EOF {
+				return nil, io.EOF
+			}
+			continue
+		}
+		return payload, nil
+	}
+}
+
+func (s *linearServer) readContentLengthMessage() ([]byte, error) {
 	contentLength := -1
 	for {
 		line, err := s.in.ReadString('\n')
@@ -207,13 +270,33 @@ func (s *linearServer) writeMessage(msg jsonRPCResponse) error {
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(s.out, "Content-Length: %d\r\n\r\n", len(payload)); err != nil {
-		return err
-	}
-	if _, err := s.out.Write(payload); err != nil {
-		return err
+	if s.format == messageFormatJSONLine {
+		if _, err := s.out.Write(payload); err != nil {
+			return err
+		}
+		if err := s.out.WriteByte('\n'); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintf(s.out, "Content-Length: %d\r\n\r\n", len(payload)); err != nil {
+			return err
+		}
+		if _, err := s.out.Write(payload); err != nil {
+			return err
+		}
 	}
 	return s.out.Flush()
+}
+
+func requestedProtocolVersion(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var params initializeParams
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(params.ProtocolVersion)
 }
 
 func firstToolSpec() map[string]any {

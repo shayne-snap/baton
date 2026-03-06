@@ -107,6 +107,85 @@ func TestRuntimeRunTurnCompletesFromSessionIdle(t *testing.T) {
 	assertUpdateEvent(t, updates, "turn_completed")
 }
 
+func TestRuntimeRunTurnCompletesFromStatusPollWhenIdleEventMissing(t *testing.T) {
+	t.Parallel()
+
+	testRoot := t.TempDir()
+	workspaceRoot := filepath.Join(testRoot, "workspaces")
+	workspace := filepath.Join(workspaceRoot, "OC-7")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	restore := setStatusPollIntervalForTest(25 * time.Millisecond)
+	defer restore()
+
+	events := make(chan string, 2)
+	statusCalls := 0
+	server := newFakeOpencodeServer(t, events, fakeOpencodeHandlers{
+		promptAsync: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{"id": "msg-user-7"})
+		},
+		sessionStatus: func(w http.ResponseWriter, r *http.Request) {
+			statusCalls++
+			if statusCalls == 1 {
+				writeJSON(t, w, map[string]any{
+					"sess-1": map[string]any{"type": "busy"},
+				})
+				return
+			}
+			writeJSON(t, w, map[string]any{})
+		},
+		sessionMessages: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, []map[string]any{
+				{
+					"id":         "msg-assistant-7",
+					"sessionID":  "sess-1",
+					"parentID":   "msg-user-7",
+					"role":       "assistant",
+					"providerID": "xai",
+					"modelID":    "grok-code-fast-1",
+					"tokens": map[string]any{
+						"input":  13,
+						"output": 8,
+						"total":  21,
+					},
+				},
+			})
+		},
+	})
+	defer server.Close()
+
+	command := writeServeScript(t, testRoot, server.URL)
+	cfg := mustOpencodeConfig(t, workspaceRoot, command)
+	client := New(cfg)
+
+	sess, err := client.StartSession(workspace)
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	defer client.StopSession(sess)
+
+	var updates []runtime.Update
+	result, err := client.RunTurn(sess, "Implement it", tracker.Issue{Identifier: "OC-7"}, runtime.RunTurnOptions{
+		OnMessage: func(update runtime.Update) {
+			updates = append(updates, update)
+		},
+	})
+	if err != nil {
+		t.Fatalf("run turn: %v", err)
+	}
+	if result.TurnID != "turn-1" {
+		t.Fatalf("unexpected turn id: %q", result.TurnID)
+	}
+	tokenUpdate := assertUpdateEvent(t, updates, "turn_completed")
+	payload, _ := tokenUpdate.Payload.(map[string]any)
+	usage, _ := payload["usage"].(map[string]any)
+	if got := mapInteger(usage["total_tokens"]); got != 21 {
+		t.Fatalf("unexpected total tokens: %#v", usage)
+	}
+}
+
 func TestRuntimeStartSessionUsesConfiguredPermissionRules(t *testing.T) {
 	t.Parallel()
 
@@ -156,7 +235,7 @@ func TestRuntimeStartSessionUsesConfiguredPermissionRules(t *testing.T) {
 	}
 }
 
-func TestRuntimeStartSessionInstallsLinearGraphQLTool(t *testing.T) {
+func TestRuntimeStartSessionConfiguresLinearMCPServer(t *testing.T) {
 	t.Parallel()
 
 	testRoot := t.TempDir()
@@ -180,16 +259,149 @@ func TestRuntimeStartSessionInstallsLinearGraphQLTool(t *testing.T) {
 	}
 	defer client.StopSession(sess)
 
-	content, err := os.ReadFile(filepath.Join(workspace, ".opencode", "tools", "linear_graphql.js"))
+	runtimeSession, ok := sess.(*session)
+	if !ok {
+		t.Fatalf("unexpected session type: %T", sess)
+	}
+	if strings.TrimSpace(runtimeSession.configDir) == "" {
+		t.Fatal("expected temporary opencode config dir to be created")
+	}
+
+	content, err := os.ReadFile(filepath.Join(runtimeSession.configDir, "opencode.json"))
 	if err != nil {
-		t.Fatalf("read installed tool: %v", err)
+		t.Fatalf("read generated opencode config: %v", err)
 	}
 	text := string(content)
-	if !strings.Contains(text, `const ENDPOINT = "https://api.linear.app/graphql"`) {
-		t.Fatalf("missing endpoint in tool: %s", text)
+	if !strings.Contains(text, `"linear"`) {
+		t.Fatalf("missing linear mcp server config: %s", text)
 	}
-	if !strings.Contains(text, `const API_KEY = "linear-token"`) {
-		t.Fatalf("missing api key in tool: %s", text)
+	if !strings.Contains(text, `"mcp-linear-server"`) {
+		t.Fatalf("missing baton mcp command in config: %s", text)
+	}
+	if !strings.Contains(text, `{env:BATON_LINEAR_API_KEY}`) {
+		t.Fatalf("expected config to use env var indirection for api key: %s", text)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".opencode", "tools", "linear_graphql.js")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no workspace custom tool to be installed, stat err=%v", err)
+	}
+}
+
+func TestRuntimeRunTurnIncludesToolErrorDetails(t *testing.T) {
+	t.Parallel()
+
+	testRoot := t.TempDir()
+	workspaceRoot := filepath.Join(testRoot, "workspaces")
+	workspace := filepath.Join(workspaceRoot, "OC-6")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	events := make(chan string, 4)
+	server := newFakeOpencodeServer(t, events, fakeOpencodeHandlers{
+		promptAsync: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{"id": "msg-user-1"})
+			events <- `{"directory":"` + workspace + `","payload":{"type":"message.part.updated","properties":{"part":{"id":"part-tool-1","sessionID":"sess-1","messageID":"msg-assistant-1","type":"tool","tool":"linear_graphql","state":{"status":"running","input":{"query":"query { viewer { id } }"}}}}}}`
+			events <- `{"directory":"` + workspace + `","payload":{"type":"message.part.updated","properties":{"part":{"id":"part-tool-1","sessionID":"sess-1","messageID":"msg-assistant-1","type":"tool","tool":"linear_graphql","state":{"status":"error","input":{"query":"query { viewer { id } }"},"error":"linear_api_status: 400 body=...","metadata":{"attempt":1}}}}}}`
+			events <- `{"directory":"` + workspace + `","payload":{"type":"session.status","properties":{"sessionID":"sess-1","status":{"type":"idle"}}}}`
+		},
+	})
+	defer server.Close()
+
+	command := writeServeScript(t, testRoot, server.URL)
+	cfg := mustOpencodeConfig(t, workspaceRoot, command)
+	client := New(cfg)
+
+	sess, err := client.StartSession(workspace)
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	defer client.StopSession(sess)
+
+	var updates []runtime.Update
+	if _, err := client.RunTurn(sess, "Inspect tool failure", tracker.Issue{Identifier: "OC-6"}, runtime.RunTurnOptions{
+		OnMessage: func(update runtime.Update) {
+			updates = append(updates, update)
+		},
+	}); err != nil {
+		t.Fatalf("run turn: %v", err)
+	}
+
+	itemCompleted := assertUpdateEvent(t, updates, "item_completed")
+	payload, _ := itemCompleted.Payload.(map[string]any)
+	item, _ := payload["item"].(map[string]any)
+	if got := stringValue(item["error"]); got != "linear_api_status: 400 body=..." {
+		t.Fatalf("unexpected tool error payload: %#v", item)
+	}
+	input, _ := item["input"].(map[string]any)
+	if got := stringValue(input["query"]); got != "query { viewer { id } }" {
+		t.Fatalf("unexpected tool input payload: %#v", item)
+	}
+}
+
+func TestRuntimeRunTurnFailsFastWhenStatusPollFindsAssistantError(t *testing.T) {
+	t.Parallel()
+
+	testRoot := t.TempDir()
+	workspaceRoot := filepath.Join(testRoot, "workspaces")
+	workspace := filepath.Join(workspaceRoot, "OC-8")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	restore := setStatusPollIntervalForTest(25 * time.Millisecond)
+	defer restore()
+
+	events := make(chan string, 2)
+	server := newFakeOpencodeServer(t, events, fakeOpencodeHandlers{
+		promptAsync: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{"id": "msg-user-8"})
+		},
+		sessionStatus: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{})
+		},
+		sessionMessages: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, []map[string]any{
+				{
+					"id":         "msg-assistant-8",
+					"sessionID":  "sess-1",
+					"parentID":   "msg-user-8",
+					"role":       "assistant",
+					"providerID": "xai",
+					"modelID":    "grok-code-fast-1",
+					"tokens": map[string]any{
+						"input":  0,
+						"output": 0,
+						"total":  0,
+					},
+					"error": map[string]any{
+						"data": map[string]any{
+							"message": "Rate limit exceeded",
+						},
+						"name": "APIError",
+					},
+				},
+			})
+		},
+	})
+	defer server.Close()
+
+	command := writeServeScript(t, testRoot, server.URL)
+	cfg := mustOpencodeConfig(t, workspaceRoot, command)
+	client := New(cfg)
+
+	sess, err := client.StartSession(workspace)
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	defer client.StopSession(sess)
+
+	start := time.Now()
+	_, err = client.RunTurn(sess, "Implement it", tracker.Issue{Identifier: "OC-8"}, runtime.RunTurnOptions{})
+	if err == nil || !strings.Contains(err.Error(), "Rate limit exceeded") {
+		t.Fatalf("expected assistant error to be surfaced, got %v", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("expected fast failure, took %s", time.Since(start))
 	}
 }
 
@@ -297,10 +509,12 @@ func TestRuntimeRunTurnAbortsOnContextCancel(t *testing.T) {
 }
 
 type fakeOpencodeHandlers struct {
-	createSession func(w http.ResponseWriter, r *http.Request)
-	promptAsync   func(w http.ResponseWriter, r *http.Request)
-	abort         func(w http.ResponseWriter, r *http.Request)
-	deleteSession func(w http.ResponseWriter, r *http.Request)
+	createSession   func(w http.ResponseWriter, r *http.Request)
+	sessionStatus   func(w http.ResponseWriter, r *http.Request)
+	sessionMessages func(w http.ResponseWriter, r *http.Request)
+	promptAsync     func(w http.ResponseWriter, r *http.Request)
+	abort           func(w http.ResponseWriter, r *http.Request)
+	deleteSession   func(w http.ResponseWriter, r *http.Request)
 }
 
 func newFakeOpencodeServer(t *testing.T, events <-chan string, handlers fakeOpencodeHandlers) *httptest.Server {
@@ -320,6 +534,28 @@ func newFakeOpencodeServer(t *testing.T, events <-chan string, handlers fakeOpen
 			return
 		}
 		writeJSON(t, w, map[string]any{"id": sessionID})
+	})
+	mux.HandleFunc("/event", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("response writer does not implement flusher")
+		}
+		fmt.Fprint(w, "data: {\"type\":\"server.connected\",\"properties\":{}}\n\n")
+		flusher.Flush()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case event, ok := <-events:
+				if !ok {
+					return
+				}
+				fmt.Fprintf(w, "data: %s\n\n", event)
+				flusher.Flush()
+			}
+		}
 	})
 	mux.HandleFunc("/global/event", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -350,6 +586,18 @@ func newFakeOpencodeServer(t *testing.T, events <-chan string, handlers fakeOpen
 		defer mu.Unlock()
 
 		switch {
+		case r.Method == http.MethodGet && path == "status":
+			if handlers.sessionStatus != nil {
+				handlers.sessionStatus(w, r)
+				return
+			}
+			writeJSON(t, w, map[string]any{})
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/message"):
+			if handlers.sessionMessages != nil {
+				handlers.sessionMessages(w, r)
+				return
+			}
+			writeJSON(t, w, []map[string]any{})
 		case strings.HasSuffix(path, "/prompt_async"):
 			if handlers.promptAsync != nil {
 				handlers.promptAsync(w, r)
@@ -469,4 +717,12 @@ func assertUpdateEvent(t *testing.T, updates []runtime.Update, event string) run
 	}
 	t.Fatalf("expected update event %q, got %#v", event, updates)
 	return runtime.Update{}
+}
+
+func setStatusPollIntervalForTest(interval time.Duration) func() {
+	previous := sessionStatusPollInterval
+	sessionStatusPollInterval = interval
+	return func() {
+		sessionStatusPollInterval = previous
+	}
 }

@@ -26,6 +26,8 @@ import (
 
 var serveReadyPattern = regexp.MustCompile(`opencode server listening on (http://[^\s]+)`)
 
+var sessionStatusPollInterval = 2 * time.Second
+
 type Runtime struct {
 	config *config.Config
 }
@@ -34,6 +36,7 @@ type session struct {
 	cmd         *exec.Cmd
 	baseURL     string
 	workspace   string
+	configDir   string
 	processPID  string
 	sessionID   string
 	httpClient  *http.Client
@@ -64,20 +67,34 @@ func (r *Runtime) StartSession(workspace string) (runtime.Session, error) {
 		return nil, err
 	}
 
+	configDir, extraEnv, err := prepareOpencodeConfigDir(r.config)
+	if err != nil {
+		return nil, err
+	}
+	cleanupConfigDir := func() {
+		if strings.TrimSpace(configDir) != "" {
+			_ = os.RemoveAll(configDir)
+		}
+	}
+
 	shellPath := "/bin/sh"
 	cmd := exec.Command(shellPath, "-lc", r.config.OpencodeCommand())
 	cmd.Dir = workspace
+	cmd.Env = append(os.Environ(), extraEnv...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		cleanupConfigDir()
 		return nil, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		cleanupConfigDir()
 		return nil, err
 	}
 
 	if err := cmd.Start(); err != nil {
+		cleanupConfigDir()
 		return nil, err
 	}
 
@@ -91,6 +108,7 @@ func (r *Runtime) StartSession(workspace string) (runtime.Session, error) {
 
 	baseURL, err := waitForServeReady(readyCh, exitCh)
 	if err != nil {
+		cleanupConfigDir()
 		return nil, err
 	}
 
@@ -98,17 +116,13 @@ func (r *Runtime) StartSession(workspace string) (runtime.Session, error) {
 		cmd:        cmd,
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		workspace:  workspace,
+		configDir:  configDir,
 		processPID: fmt.Sprintf("%d", cmd.Process.Pid),
 		httpClient: &http.Client{},
 		events:     make(chan sseEvent, 256),
 		exitCh:     exitCh,
 		partTypes:  make(map[string]string),
 		permission: r.opencodePermissionRules(),
-	}
-
-	if err := installLinearGraphQLTool(workspace, r.config); err != nil {
-		sess.stop()
-		return nil, err
 	}
 
 	sessionID, err := sess.createSession()
@@ -159,15 +173,26 @@ func (r *Runtime) RunTurn(sess runtime.Session, prompt string, issue tracker.Iss
 		})
 	}
 
-	if err := opencodeSession.promptAsync(ctx, prompt); err != nil {
+	promptMessageID, err := opencodeSession.promptAsync(ctx, prompt)
+	if err != nil {
 		return nil, err
 	}
+	statusTicker := time.NewTicker(sessionStatusPollInterval)
+	defer statusTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			opencodeSession.abortTurn(context.Background())
 			return nil, ctx.Err()
+		case <-statusTicker.C:
+			done, result, err := opencodeSession.checkTurnState(ctx, syntheticSessionID, turnID, promptMessageID, opts.OnMessage)
+			if err != nil {
+				return nil, err
+			}
+			if done {
+				return result, nil
+			}
 		case err := <-opencodeSession.exitCh:
 			if err == nil {
 				return nil, fmt.Errorf("opencode server exited unexpectedly")
@@ -220,79 +245,78 @@ func (r *Runtime) opencodePermissionRules() []map[string]any {
 	return defaultPermissionRules()
 }
 
-func installLinearGraphQLTool(workspace string, cfg *config.Config) error {
+func prepareOpencodeConfigDir(cfg *config.Config) (string, []string, error) {
 	if cfg == nil || strings.TrimSpace(cfg.Tracker.Kind) != "linear" {
-		return nil
+		return "", nil, nil
 	}
 	apiKey := strings.TrimSpace(cfg.LinearAPIToken())
 	if apiKey == "" {
-		return nil
+		return "", nil, nil
 	}
 
-	toolDir := filepath.Join(workspace, ".opencode", "tools")
-	if err := os.MkdirAll(toolDir, 0o755); err != nil {
-		return err
+	configDir, err := os.MkdirTemp("", "baton-opencode-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func(err error) (string, []string, error) {
+		_ = os.RemoveAll(configDir)
+		return "", nil, err
 	}
 
-	toolPath := filepath.Join(toolDir, "linear_graphql.js")
-	return os.WriteFile(toolPath, []byte(renderLinearGraphQLTool(strings.TrimSpace(cfg.LinearEndpoint()), apiKey)), 0o644)
+	executable, err := os.Executable()
+	if err != nil {
+		return cleanup(err)
+	}
+	configPayload := map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"mcp": map[string]any{
+			"linear": map[string]any{
+				"type":    "local",
+				"command": []string{filepath.Clean(executable), "mcp-linear-server"},
+				"enabled": true,
+				"environment": map[string]any{
+					"BATON_LINEAR_API_KEY":  "{env:BATON_LINEAR_API_KEY}",
+					"BATON_LINEAR_ENDPOINT": "{env:BATON_LINEAR_ENDPOINT}",
+				},
+			},
+		},
+	}
+	rawConfig, err := json.MarshalIndent(configPayload, "", "  ")
+	if err != nil {
+		return cleanup(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "opencode.json"), rawConfig, 0o644); err != nil {
+		return cleanup(err)
+	}
+
+	return configDir, []string{
+		"OPENCODE_CONFIG_DIR=" + configDir,
+		"BATON_LINEAR_API_KEY=" + apiKey,
+		"BATON_LINEAR_ENDPOINT=" + linearEndpointOrDefault(strings.TrimSpace(cfg.LinearEndpoint())),
+	}, nil
 }
 
-func renderLinearGraphQLTool(endpoint string, apiKey string) string {
-	if endpoint == "" {
-		endpoint = "https://api.linear.app/graphql"
+func linearEndpointOrDefault(endpoint string) string {
+	if strings.TrimSpace(endpoint) == "" {
+		return "https://api.linear.app/graphql"
 	}
-	content := `import { tool } from "@opencode-ai/plugin"
-
-const ENDPOINT = "__LINEAR_ENDPOINT__"
-const API_KEY = "__LINEAR_API_KEY__"
-
-export default tool({
-  description: "Execute a raw GraphQL query or mutation against Linear using Baton's configured auth.",
-  args: {
-    query: tool.schema.string().describe("GraphQL query or mutation document to execute against Linear."),
-    variables: tool.schema.any().optional().describe("Optional GraphQL variables object."),
-  },
-  async execute(args) {
-    const response = await fetch(ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Authorization": API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        query: args.query,
-        variables: args.variables ?? {},
-      }),
-    })
-
-    const text = await response.text()
-    if (!response.ok) {
-      throw new Error("linear_api_status: " + response.status + " body=" + text)
-    }
-
-    return text
-  },
-})
-`
-	content = strings.ReplaceAll(content, "__LINEAR_ENDPOINT__", jsStringLiteral(endpoint))
-	content = strings.ReplaceAll(content, "__LINEAR_API_KEY__", jsStringLiteral(apiKey))
-	return content
-}
-
-func jsStringLiteral(value string) string {
-	replacer := strings.NewReplacer(
-		`\\`, `\\\\`,
-		`"`, `\"`,
-		"\n", `\n`,
-		"\r", `\r`,
-		"</", `<\/`,
-	)
-	return replacer.Replace(value)
+	return endpoint
 }
 
 func (s *session) connectEventStream() (io.ReadCloser, error) {
-	req, err := s.newRequest(context.Background(), http.MethodGet, "/global/event", nil)
+	var errs []string
+	for _, path := range []string{"/event", "/global/event"} {
+		stream, err := s.connectEventStreamPath(path)
+		if err == nil {
+			return stream, nil
+		}
+		errs = append(errs, err.Error())
+	}
+	return nil, fmt.Errorf("opencode event stream connect failed: %s", strings.Join(errs, "; "))
+}
+
+func (s *session) connectEventStreamPath(path string) (io.ReadCloser, error) {
+	req, err := s.newRequest(context.Background(), http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -302,12 +326,12 @@ func (s *session) connectEventStream() (io.ReadCloser, error) {
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
-		return nil, fmt.Errorf("opencode global event stream returned status %s", resp.Status)
+		return nil, fmt.Errorf("opencode event stream %s returned status %s", path, resp.Status)
 	}
 	return resp.Body, nil
 }
 
-func (s *session) promptAsync(ctx context.Context, prompt string) error {
+func (s *session) promptAsync(ctx context.Context, prompt string) (string, error) {
 	body := map[string]any{
 		"parts": []map[string]any{
 			{
@@ -317,7 +341,13 @@ func (s *session) promptAsync(ctx context.Context, prompt string) error {
 		},
 	}
 	path := fmt.Sprintf("/session/%s/prompt_async", s.sessionID)
-	return s.postJSON(ctx, http.MethodPost, path, body, nil)
+	var response struct {
+		ID string `json:"id"`
+	}
+	if err := s.postJSON(ctx, http.MethodPost, path, body, &response); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(response.ID), nil
 }
 
 func (s *session) abortTurn(ctx context.Context) {
@@ -354,6 +384,9 @@ func (s *session) stop() {
 				case <-time.After(500 * time.Millisecond):
 				}
 			}
+		}
+		if strings.TrimSpace(s.configDir) != "" {
+			_ = os.RemoveAll(s.configDir)
 		}
 	})
 }
@@ -434,13 +467,26 @@ func (s *session) handleEvent(
 				})
 			}
 			if status == "completed" || status == "error" {
+				itemPayload := map[string]any{
+					"type":   "tool",
+					"id":     partID,
+					"tool":   stringValue(part["tool"]),
+					"status": status,
+				}
+				if input, ok := state["input"]; ok && input != nil {
+					itemPayload["input"] = input
+				}
+				if metadata, ok := state["metadata"]; ok && metadata != nil {
+					itemPayload["metadata"] = metadata
+				}
+				if title := stringValue(state["title"]); strings.TrimSpace(title) != "" {
+					itemPayload["title"] = title
+				}
+				if status == "error" {
+					itemPayload["error"] = stringValue(state["error"])
+				}
 				emitUpdate(handler, s.processPID, "item_completed", map[string]any{
-					"item": map[string]any{
-						"type":   "tool",
-						"id":     partID,
-						"tool":   stringValue(part["tool"]),
-						"status": status,
-					},
+					"item":    itemPayload,
 					"runtime": "opencode",
 				})
 			}
@@ -513,31 +559,124 @@ func (s *session) handleEvent(
 		if stringValue(status["type"]) != "idle" {
 			return false, nil, nil
 		}
-		s.mu.Lock()
-		usage := cloneMap(s.lastUsage)
-		s.mu.Unlock()
-		completedPayload := map[string]any{
-			"method": "turn_completed",
-			"usage":  usage,
-			"params": map[string]any{
-				"session_id":         syntheticSessionID,
-				"runtime_session_id": s.sessionID,
-				"thread_id":          s.sessionID,
-				"turn_id":            turnID,
-				"usage":              usage,
-				"runtime":            "opencode",
-			},
-		}
-		emitUpdate(handler, s.processPID, "turn_completed", completedPayload)
-		return true, &runtime.TurnResult{
-			SessionID: syntheticSessionID,
-			ThreadID:  s.sessionID,
-			TurnID:    turnID,
-			Result:    completedPayload,
-		}, nil
+		done, result := s.completeTurn(syntheticSessionID, turnID, nil, handler)
+		return done, result, nil
 	}
 
 	return false, nil, nil
+}
+
+func (s *session) checkTurnState(
+	ctx context.Context,
+	syntheticSessionID string,
+	turnID string,
+	promptMessageID string,
+	handler runtime.MessageHandler,
+) (bool, *runtime.TurnResult, error) {
+	status, err := s.fetchSessionStatus(ctx)
+	if err != nil {
+		return false, nil, nil
+	}
+	if status != "idle" {
+		return false, nil, nil
+	}
+
+	summary, err := s.fetchTurnSummary(ctx, promptMessageID)
+	if err != nil {
+		return false, nil, err
+	}
+	if strings.TrimSpace(summary.Error) != "" {
+		emitUpdate(handler, s.processPID, "notification", map[string]any{
+			"method": "session.error",
+			"params": map[string]any{
+				"sessionID": s.sessionID,
+				"error": map[string]any{
+					"message": summary.Error,
+				},
+			},
+		})
+		return false, nil, fmt.Errorf("opencode session error: %s", summary.Error)
+	}
+	if !summary.Found {
+		return false, nil, fmt.Errorf("opencode session became idle without assistant output")
+	}
+	done, result := s.completeTurn(syntheticSessionID, turnID, summary.Usage, handler)
+	return done, result, nil
+}
+
+func (s *session) completeTurn(
+	syntheticSessionID string,
+	turnID string,
+	usage map[string]any,
+	handler runtime.MessageHandler,
+) (bool, *runtime.TurnResult) {
+	if len(usage) == 0 {
+		s.mu.Lock()
+		usage = cloneMap(s.lastUsage)
+		s.mu.Unlock()
+	}
+	completedPayload := map[string]any{
+		"method": "turn_completed",
+		"usage":  usage,
+		"params": map[string]any{
+			"session_id":         syntheticSessionID,
+			"runtime_session_id": s.sessionID,
+			"thread_id":          s.sessionID,
+			"turn_id":            turnID,
+			"usage":              usage,
+			"runtime":            "opencode",
+		},
+	}
+	emitUpdate(handler, s.processPID, "turn_completed", completedPayload)
+	return true, &runtime.TurnResult{
+		SessionID: syntheticSessionID,
+		ThreadID:  s.sessionID,
+		TurnID:    turnID,
+		Result:    completedPayload,
+	}
+}
+
+type turnSummary struct {
+	Found bool
+	Usage map[string]any
+	Error string
+}
+
+func (s *session) fetchSessionStatus(ctx context.Context) (string, error) {
+	var statuses map[string]map[string]any
+	if err := s.postJSON(ctx, http.MethodGet, "/session/status", nil, &statuses); err != nil {
+		return "", err
+	}
+	status, ok := statuses[s.sessionID]
+	if !ok || len(status) == 0 {
+		return "idle", nil
+	}
+	return stringValue(status["type"]), nil
+}
+
+func (s *session) fetchTurnSummary(ctx context.Context, promptMessageID string) (turnSummary, error) {
+	var messages []map[string]any
+	path := fmt.Sprintf("/session/%s/message", s.sessionID)
+	if err := s.postJSON(ctx, http.MethodGet, path, nil, &messages); err != nil {
+		return turnSummary{}, err
+	}
+	summary := turnSummary{}
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if stringValue(message["role"]) != "assistant" {
+			continue
+		}
+		if promptMessageID != "" && stringValue(message["parentID"]) != promptMessageID {
+			continue
+		}
+		summary.Found = true
+		summary.Usage = assistantUsage(message)
+		if errPayload, ok := message["error"].(map[string]any); ok {
+			summary.Error = errorMessageFromMap(errPayload)
+		}
+		return summary, nil
+	}
+	return summary, nil
 }
 
 func (s *session) readEvents(stream io.Reader) {
@@ -561,9 +700,16 @@ func (s *session) readEvents(stream io.Reader) {
 		if len(dataLines) == 0 {
 			return
 		}
-		var event sseEvent
-		if err := json.Unmarshal([]byte(strings.Join(dataLines, "\n")), &event); err != nil {
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(strings.Join(dataLines, "\n")), &raw); err != nil {
 			return
+		}
+		event := sseEvent{}
+		if payload, ok := raw["payload"].(map[string]any); ok {
+			event.Directory = stringValue(raw["directory"])
+			event.Payload = payload
+		} else {
+			event.Payload = raw
 		}
 		s.events <- event
 	}
@@ -769,12 +915,19 @@ func sameSession(payload map[string]any, sessionID string) bool {
 
 func sessionErrorMessage(payload map[string]any) string {
 	errPayload, _ := payload["error"].(map[string]any)
+	return errorMessageFromMap(errPayload)
+}
+
+func errorMessageFromMap(errPayload map[string]any) string {
 	if data, ok := errPayload["data"].(map[string]any); ok {
 		if message := stringValue(data["message"]); strings.TrimSpace(message) != "" {
 			return message
 		}
 	}
-	if name := stringValue(errPayload["name"]); strings.TrimSpace(name) != "" {
+	if message := stringValue(errPayload["message"]); strings.TrimSpace(message) != "" && message != "<nil>" {
+		return message
+	}
+	if name := stringValue(errPayload["name"]); strings.TrimSpace(name) != "" && name != "<nil>" {
 		return name
 	}
 	return "unknown session error"
