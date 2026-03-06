@@ -1,6 +1,6 @@
 # Baton
 
-Baton is a Go implementation of [Symphony](https://github.com/openai/symphony)’.
+Baton is a Go implementation of [Symphony](https://github.com/openai/symphony).
 
 ## What Baton does
 - Polls your tracker (Linear by default) for claimable issues and reserves an isolated workspace
