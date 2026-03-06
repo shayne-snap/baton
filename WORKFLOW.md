@@ -30,13 +30,36 @@ hooks:
 agent:
   max_concurrent_agents: 10
   max_turns: 20
-codex:
-  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
-  approval_policy: never
-  thread_sandbox: workspace-write
-  turn_sandbox_policy:
-    type: workspaceWrite
+agent_runtime:
+  kind: opencode
+  opencode:
+    command: opencode serve
+    permission:
+      - permission: "*"
+        pattern: "*"
+        action: allow
+      - permission: "external_directory"
+        pattern: "*"
+        action: deny
+      - permission: "question"
+        pattern: "*"
+        action: allow
 ---
+
+Runtime configuration notes:
+
+- Baton now prefers `agent_runtime` for selecting the backend that executes agent turns.
+- Supported values today are `codex` and `opencode`.
+- The legacy top-level `codex:` block is still accepted for backward compatibility, but new workflows should use `agent_runtime`.
+
+Example `opencode` runtime configuration:
+
+```yaml
+agent_runtime:
+  kind: opencode
+  opencode:
+    command: opencode serve
+```
 
 You are working on a Linear ticket `{{ issue.identifier }}`
 

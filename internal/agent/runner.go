@@ -8,18 +8,22 @@ import (
 	"baton/internal/codex"
 	"baton/internal/config"
 	"baton/internal/prompt"
+	"baton/internal/runtime"
+	"baton/internal/runtime/codexruntime"
+	opencoderuntime "baton/internal/runtime/opencode"
 	"baton/internal/tracker"
 	"baton/internal/workspace"
 )
 
 type IssueStateFetcher func(ctx context.Context, ids []string) ([]tracker.Issue, error)
-type CodexUpdateHandler func(issueID string, update codex.Update)
+type RuntimeUpdateHandler func(issueID string, update runtime.Update)
 
 type RunOptions struct {
 	Attempt           *int
 	MaxTurns          int
 	IssueStateFetcher IssueStateFetcher
-	OnCodexUpdate     CodexUpdateHandler
+	OnRuntimeUpdate   RuntimeUpdateHandler
+	OnCodexUpdate     func(issueID string, update codex.Update)
 }
 
 type Runner interface {
@@ -30,7 +34,7 @@ type runner struct {
 	config        *config.Config
 	workspace     workspace.Manager
 	tracker       tracker.Client
-	appServer     *codex.AppServer
+	agentRuntime  runtime.Runtime
 	promptBuilder *prompt.Builder
 	logsRoot      string
 }
@@ -48,9 +52,20 @@ func NewRunner(cfg *config.Config, manager workspace.Manager, trackerClient trac
 		config:        cfg,
 		workspace:     manager,
 		tracker:       trackerClient,
-		appServer:     codex.NewAppServer(cfg),
+		agentRuntime:  newAgentRuntime(cfg),
 		promptBuilder: prompt.NewBuilder(cfg),
 		logsRoot:      opts.LogsRoot,
+	}
+}
+
+func newAgentRuntime(cfg *config.Config) runtime.Runtime {
+	switch cfg.AgentRuntimeKind() {
+	case "codex":
+		return codexruntime.New(cfg)
+	case "opencode":
+		return opencoderuntime.New(cfg)
+	default:
+		return codexruntime.New(cfg)
 	}
 }
 
@@ -76,11 +91,11 @@ func (r *runner) Run(ctx context.Context, issue tracker.Issue, opts RunOptions) 
 		issueStateFetcher = r.tracker.FetchIssueStatesByIDs
 	}
 
-	session, err := r.appServer.StartSession(workspacePath)
+	session, err := r.agentRuntime.StartSession(workspacePath)
 	if err != nil {
 		return fmt.Errorf("agent run failed for issue_id=%s issue_identifier=%s: %w", issue.ID, issue.Identifier, err)
 	}
-	defer r.appServer.StopSession(session)
+	defer r.agentRuntime.StopSession(session)
 
 	sessionLogger := newSessionLogWriter(r.logsRoot, issue.Identifier)
 	defer sessionLogger.Close()
@@ -92,13 +107,18 @@ func (r *runner) Run(ctx context.Context, issue tracker.Issue, opts RunOptions) 
 			return fmt.Errorf("agent run failed for issue_id=%s issue_identifier=%s: %w", issue.ID, issue.Identifier, err)
 		}
 
-		_, err = r.appServer.RunTurn(session, promptText, currentIssue, codex.RunTurnOptions{
-			OnMessage: func(update codex.Update) {
+		_, err = r.agentRuntime.RunTurn(session, promptText, currentIssue, runtime.RunTurnOptions{
+			OnMessage: func(update runtime.Update) {
 				sessionLogger.WriteUpdate(update)
-				if opts.OnCodexUpdate == nil || strings.TrimSpace(currentIssue.ID) == "" {
+				if strings.TrimSpace(currentIssue.ID) == "" {
 					return
 				}
-				opts.OnCodexUpdate(currentIssue.ID, update)
+				if opts.OnRuntimeUpdate != nil {
+					opts.OnRuntimeUpdate(currentIssue.ID, update)
+				}
+				if opts.OnCodexUpdate != nil {
+					opts.OnCodexUpdate(currentIssue.ID, codex.Update(update))
+				}
 			},
 		})
 		if err != nil {

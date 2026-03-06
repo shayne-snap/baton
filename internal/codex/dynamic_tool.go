@@ -14,7 +14,9 @@ import (
 	"baton/internal/config"
 )
 
-const linearGraphQLTool = "linear_graphql"
+const LinearGraphQLTool = "linear_graphql"
+
+const linearGraphQLTool = LinearGraphQLTool
 
 var (
 	errMissingQuery          = errors.New("missing_query")

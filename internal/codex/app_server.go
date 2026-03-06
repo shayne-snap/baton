@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"baton/internal/config"
+	"baton/internal/runtime"
 	"baton/internal/tracker"
 
 	zlog "github.com/rs/zerolog/log"
@@ -110,30 +111,11 @@ func (e *PortExitError) Error() string {
 
 func (e *PortExitError) Unwrap() error { return ErrPortExit }
 
-type Update struct {
-	Event             string
-	Timestamp         time.Time
-	CodexAppServerPID string
-	Payload           any
-	Raw               string
-	Decision          string
-}
-
-type TurnResult struct {
-	Result    any
-	SessionID string
-	ThreadID  string
-	TurnID    string
-}
-
-type MessageHandler func(Update)
-type ToolExecutor func(ctx context.Context, tool string, arguments any) map[string]any
-
-type RunTurnOptions struct {
-	Context      context.Context
-	OnMessage    MessageHandler
-	ToolExecutor ToolExecutor
-}
+type Update = runtime.Update
+type TurnResult = runtime.TurnResult
+type MessageHandler = runtime.MessageHandler
+type ToolExecutor = runtime.ToolExecutor
+type RunTurnOptions = runtime.RunTurnOptions
 
 type AppServer struct {
 	config       *config.Config
@@ -226,9 +208,9 @@ func (a *AppServer) StartSession(workspace string) (*Session, error) {
 		threadSandbox:     settings.ThreadSandbox,
 		turnSandboxPolicy: settings.TurnSandboxPolicy,
 		workspace:         absWorkspace,
-		metadata: map[string]any{
-			"codex_app_server_pid": fmt.Sprintf("%d", cmd.Process.Pid),
-		},
+	metadata: map[string]any{
+		"codex_app_server_pid": fmt.Sprintf("%d", cmd.Process.Pid),
+	},
 	}
 
 	go session.readStdout(stdout)
@@ -814,6 +796,7 @@ func (a *AppServer) emit(handler MessageHandler, session *Session, update Update
 		return
 	}
 	update.Timestamp = time.Now().UTC()
-	update.CodexAppServerPID = stringValue(session.metadata["codex_app_server_pid"])
+	update.AppServerPID = stringValue(session.metadata["codex_app_server_pid"])
+	update.CodexAppServerPID = update.AppServerPID
 	handler(update)
 }

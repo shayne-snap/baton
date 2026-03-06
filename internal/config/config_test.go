@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -109,6 +110,51 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 		if verr.Value != "123" {
 			t.Fatalf("expected unsupported kind value to be %q, got %#v", "123", verr.Value)
 		}
+	}
+
+	cfg = mustConfig(t, map[string]any{
+		"tracker": map[string]any{"kind": "memory"},
+		"agent_runtime": map[string]any{
+			"kind": "opencode",
+			"opencode": map[string]any{
+				"command": "opencode serve --port 0",
+				"permission": []any{
+					map[string]any{
+						"permission": "*",
+						"pattern":    "*",
+						"action":     "allow",
+					},
+				},
+			},
+		},
+	}, "")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected opencode validate ok, got %v", err)
+	}
+	if got := cfg.OpencodeCommand(); got != "opencode serve --port 0" {
+		t.Fatalf("opencode command mismatch: %q", got)
+	}
+	assertMapListEqual(t, cfg.OpencodePermissionRules(), []map[string]any{
+		{"permission": "*", "pattern": "*", "action": "allow"},
+	})
+
+	cfg = mustConfig(t, map[string]any{
+		"tracker": map[string]any{"kind": "memory"},
+		"agent_runtime": map[string]any{
+			"kind": "opencode",
+			"opencode": map[string]any{
+				"command": "",
+			},
+		},
+	}, "")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected opencode blank command to use default, got %v", err)
+	}
+	if got := cfg.OpencodeCommand(); got != "opencode serve" {
+		t.Fatalf("expected default opencode command, got %q", got)
+	}
+	if got := cfg.OpencodePermissionRules(); got != nil {
+		t.Fatalf("expected no explicit opencode permission rules, got %#v", got)
 	}
 }
 
@@ -378,6 +424,21 @@ func assertStringSliceEqual(t *testing.T, got []string, expected []string) {
 		if got[idx] != expected[idx] {
 			t.Fatalf("value mismatch at %d: got=%v expected=%v", idx, got, expected)
 		}
+	}
+}
+
+func assertMapListEqual(t *testing.T, got []map[string]any, expected []map[string]any) {
+	t.Helper()
+	gotJSON, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal got rules: %v", err)
+	}
+	expectedJSON, err := json.Marshal(expected)
+	if err != nil {
+		t.Fatalf("marshal expected rules: %v", err)
+	}
+	if string(gotJSON) != string(expectedJSON) {
+		t.Fatalf("rule mismatch: got=%s expected=%s", gotJSON, expectedJSON)
 	}
 }
 

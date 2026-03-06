@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"baton/internal/codex"
 	"baton/internal/logging"
+	"baton/internal/runtime"
 )
 
 type sessionLogWriter struct {
@@ -49,7 +49,7 @@ func newSessionLogWriter(logsRoot string, issueIdentifier string) *sessionLogWri
 	}
 }
 
-func (w *sessionLogWriter) WriteUpdate(update codex.Update) {
+func (w *sessionLogWriter) WriteUpdate(update runtime.Update) {
 	if w == nil {
 		return
 	}
@@ -61,8 +61,12 @@ func (w *sessionLogWriter) WriteUpdate(update codex.Update) {
 		"raw":       update.Raw,
 		"decision":  update.Decision,
 	}
-	if update.CodexAppServerPID != "" {
-		line["codex_app_server_pid"] = update.CodexAppServerPID
+	appServerPID := strings.TrimSpace(update.AppServerPID)
+	if appServerPID == "" {
+		appServerPID = strings.TrimSpace(update.CodexAppServerPID)
+	}
+	if appServerPID != "" {
+		line["codex_app_server_pid"] = appServerPID
 	}
 
 	encoded, err := json.Marshal(line)

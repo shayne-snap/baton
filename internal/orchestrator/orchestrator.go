@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"baton/internal/agent"
-	"baton/internal/codex"
 	"baton/internal/config"
+	"baton/internal/runtime"
 	"baton/internal/tracker"
 	"baton/internal/workspace"
 
@@ -123,7 +123,7 @@ type workerDone struct {
 
 type workerUpdate struct {
 	issueID string
-	update  codex.Update
+	update  runtime.Update
 }
 
 type tokenDelta struct {
@@ -661,7 +661,7 @@ func (o *Orchestrator) dispatchIssue(ctx context.Context, state *runtimeState, i
 func (o *Orchestrator) runIssueWorker(ctx context.Context, issue tracker.Issue, attempt *int) {
 	err := o.runner.Run(ctx, issue, agent.RunOptions{
 		Attempt: attempt,
-		OnCodexUpdate: func(issueID string, update codex.Update) {
+		OnRuntimeUpdate: func(issueID string, update runtime.Update) {
 			select {
 			case o.workerUpdateCh <- workerUpdate{issueID: issueID, update: update}:
 			case <-o.stopCh:
@@ -1008,6 +1008,8 @@ func (o *Orchestrator) logValidationError(err error) {
 		o.logger.Error().Msg("Tracker kind missing in WORKFLOW.md")
 	case errors.Is(validationErr.Code, config.ErrUnsupportedTrackerKind):
 		o.logger.Error().Any("kind", validationErr.Value).Msg("unsupported tracker kind in WORKFLOW.md")
+	case errors.Is(validationErr.Code, config.ErrUnsupportedAgentRuntime):
+		o.logger.Error().Any("kind", validationErr.Value).Msg("unsupported agent_runtime.kind in WORKFLOW.md")
 	case errors.Is(validationErr.Code, config.ErrMissingCodexCommand):
 		o.logger.Error().Msg("Codex command missing in WORKFLOW.md")
 	case errors.Is(validationErr.Code, config.ErrInvalidCodexApproval):
@@ -1164,7 +1166,7 @@ func fallbackIdentifier(issueID string, identifier string) string {
 	return issueID
 }
 
-func summarizeUpdate(update codex.Update) map[string]any {
+func summarizeUpdate(update runtime.Update) map[string]any {
 	return map[string]any{
 		"event":     update.Event,
 		"message":   firstNonNil(update.Payload, update.Raw),
@@ -1186,7 +1188,7 @@ func firstNonNil(values ...any) any {
 	return nil
 }
 
-func sessionIDForUpdate(existing string, update codex.Update) string {
+func sessionIDForUpdate(existing string, update runtime.Update) string {
 	if payload, ok := update.Payload.(map[string]any); ok {
 		if sessionID := stringValue(payload["session_id"]); strings.TrimSpace(sessionID) != "" {
 			return sessionID
@@ -1198,14 +1200,18 @@ func sessionIDForUpdate(existing string, update codex.Update) string {
 	return ""
 }
 
-func codexPIDForUpdate(existing string, update codex.Update) string {
-	if strings.TrimSpace(update.CodexAppServerPID) != "" {
-		return strings.TrimSpace(update.CodexAppServerPID)
+func codexPIDForUpdate(existing string, update runtime.Update) string {
+	pid := strings.TrimSpace(update.AppServerPID)
+	if pid == "" {
+		pid = strings.TrimSpace(update.CodexAppServerPID)
+	}
+	if pid != "" {
+		return pid
 	}
 	return existing
 }
 
-func turnCountForUpdate(existing int, currentSessionID string, update codex.Update) int {
+func turnCountForUpdate(existing int, currentSessionID string, update runtime.Update) int {
 	if update.Event != "session_started" {
 		if existing >= 0 {
 			return existing
@@ -1226,7 +1232,7 @@ func turnCountForUpdate(existing int, currentSessionID string, update codex.Upda
 	return existing + 1
 }
 
-func extractTokenDelta(entry *runningEntry, update codex.Update) tokenDelta {
+func extractTokenDelta(entry *runningEntry, update runtime.Update) tokenDelta {
 	usage := extractTokenUsage(update)
 
 	input := computeTokenDelta(entry.lastReportedInput, usage, tokenFieldInput)
@@ -1267,7 +1273,7 @@ func computeTokenDelta(prevReported int, usage map[string]any, field tokenField)
 	return computedDelta{delta: nextTotal - prevReported, reported: nextTotal}
 }
 
-func extractTokenUsage(update codex.Update) map[string]any {
+func extractTokenUsage(update runtime.Update) map[string]any {
 	payloads := []any{update.Payload}
 	for _, payload := range payloads {
 		if usage := absoluteTokenUsageFromPayload(payload); usage != nil {
@@ -1325,7 +1331,7 @@ func turnCompletedUsageFromPayload(payload any) map[string]any {
 	return nil
 }
 
-func extractRateLimits(update codex.Update) map[string]any {
+func extractRateLimits(update runtime.Update) map[string]any {
 	return rateLimitsFromPayload(update.Payload)
 }
 

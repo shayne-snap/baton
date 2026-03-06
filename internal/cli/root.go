@@ -54,6 +54,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.Flags().IntVar(&opts.port, "port", -1, "Optional HTTP observability API port")
 	cmd.Flags().BoolVar(&opts.acknowledged, acknowledgementFlag, false, "Acknowledge running without usual guardrails")
 	cmd.AddCommand(
+		newMCPLinearServerCommand(),
 		newWorkspaceBeforeRemoveCommand(),
 		newPRBodyCheckCommand(),
 		newSpecsCheckCommand(),

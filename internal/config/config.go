@@ -17,7 +17,9 @@ var (
 	ErrMissingTrackerKind        = errors.New("missing_tracker_kind")
 	ErrMissingLinearAPIToken     = errors.New("missing_linear_api_token")
 	ErrMissingLinearProjectSlug  = errors.New("missing_linear_project_slug")
+	ErrUnsupportedAgentRuntime   = errors.New("unsupported_agent_runtime")
 	ErrMissingCodexCommand       = errors.New("missing_codex_command")
+	ErrMissingOpencodeCommand    = errors.New("missing_opencode_command")
 	ErrInvalidCodexApproval      = errors.New("invalid_codex_approval_policy")
 	ErrInvalidCodexThreadSandbox = errors.New("invalid_codex_thread_sandbox")
 	ErrInvalidCodexTurnSandbox   = errors.New("invalid_codex_turn_sandbox_policy")
@@ -32,6 +34,7 @@ const (
 	defaultMaxTurns           = 20
 	defaultMaxRetryBackoffMS  = 300_000
 	defaultCodexCommand       = "codex app-server"
+	defaultOpencodeCommand    = "opencode serve"
 	defaultCodexTurnTimeoutMS = 3_600_000
 	defaultCodexReadTimeoutMS = 5_000
 	defaultCodexStallTimeout  = 300_000
@@ -98,7 +101,7 @@ type Config struct {
 	Tracker       TrackerConfig
 	Polling       PollingConfig
 	Agent         AgentConfig
-	Codex         CodexConfig
+	AgentRuntime  AgentRuntimeConfig
 	Hooks         HooksConfig
 	Observability ObservabilityConfig
 	Server        ServerConfig
@@ -127,6 +130,12 @@ type AgentConfig struct {
 	MaxConcurrentAgentsByState map[string]int
 }
 
+type AgentRuntimeConfig struct {
+	Kind     string
+	Codex    CodexConfig
+	Opencode OpencodeConfig
+}
+
 type CodexConfig struct {
 	Command        string
 	ApprovalPolicy any
@@ -135,6 +144,11 @@ type CodexConfig struct {
 	TurnTimeoutMS  int
 	ReadTimeoutMS  int
 	StallTimeoutMS int
+}
+
+type OpencodeConfig struct {
+	Command    string
+	Permission []map[string]any
 }
 
 type HooksConfig struct {
@@ -169,6 +183,9 @@ func FromWorkflow(path string, definition *workflow.Definition) (*Config, error)
 
 	cleanPath := filepath.Clean(path)
 	raw := normalizeMap(definition.Config)
+	agentRuntimeRaw, _ := getPath(raw, "agent_runtime").(map[string]any)
+	codexRaw := codexConfigSource(raw)
+	opencodeRaw, _ := getPath(agentRuntimeRaw, "opencode").(map[string]any)
 
 	cfg := &Config{
 		WorkflowPath:   cleanPath,
@@ -192,14 +209,21 @@ func FromWorkflow(path string, definition *workflow.Definition) (*Config, error)
 			MaxRetryBackoffMS:          positiveIntWithDefault(getPath(raw, "agent", "max_retry_backoff_ms"), defaultMaxRetryBackoffMS),
 			MaxConcurrentAgentsByState: parseStateLimits(getPath(raw, "agent", "max_concurrent_agents_by_state")),
 		},
-		Codex: CodexConfig{
-			Command:        commandWithDefault(getPath(raw, "codex", "command"), defaultCodexCommand),
-			ApprovalPolicy: getPath(raw, "codex", "approval_policy"),
-			ThreadSandbox:  getPath(raw, "codex", "thread_sandbox"),
-			TurnSandbox:    getPath(raw, "codex", "turn_sandbox_policy"),
-			TurnTimeoutMS:  intWithDefault(getPath(raw, "codex", "turn_timeout_ms"), defaultCodexTurnTimeoutMS),
-			ReadTimeoutMS:  intWithDefault(getPath(raw, "codex", "read_timeout_ms"), defaultCodexReadTimeoutMS),
-			StallTimeoutMS: intWithDefault(getPath(raw, "codex", "stall_timeout_ms"), defaultCodexStallTimeout),
+		AgentRuntime: AgentRuntimeConfig{
+			Kind: normalizeAgentRuntimeKind(scalarString(getPath(agentRuntimeRaw, "kind"))),
+			Codex: CodexConfig{
+				Command:        commandWithDefault(getPath(codexRaw, "command"), defaultCodexCommand),
+				ApprovalPolicy: getPath(codexRaw, "approval_policy"),
+				ThreadSandbox:  getPath(codexRaw, "thread_sandbox"),
+				TurnSandbox:    getPath(codexRaw, "turn_sandbox_policy"),
+				TurnTimeoutMS:  intWithDefault(getPath(codexRaw, "turn_timeout_ms"), defaultCodexTurnTimeoutMS),
+				ReadTimeoutMS:  intWithDefault(getPath(codexRaw, "read_timeout_ms"), defaultCodexReadTimeoutMS),
+				StallTimeoutMS: intWithDefault(getPath(codexRaw, "stall_timeout_ms"), defaultCodexStallTimeout),
+			},
+			Opencode: OpencodeConfig{
+				Command:    commandWithDefault(getPath(opencodeRaw, "command"), defaultOpencodeCommand),
+				Permission: parseMapList(getPath(opencodeRaw, "permission")),
+			},
 		},
 		Hooks: HooksConfig{
 			AfterCreate:  hookValue(getPath(raw, "hooks", "after_create")),
@@ -244,12 +268,22 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	if _, err := c.codexRuntimeSettingsLocked(""); err != nil {
-		return err
+	if kind := c.AgentRuntime.Kind; kind != "" && kind != "codex" && kind != "opencode" {
+		return &ValidationError{Code: ErrUnsupportedAgentRuntime, Value: kind}
 	}
 
-	if strings.TrimSpace(c.Codex.Command) == "" {
-		return &ValidationError{Code: ErrMissingCodexCommand}
+	switch c.AgentRuntimeKind() {
+	case "codex":
+		if _, err := c.codexRuntimeSettingsLocked(""); err != nil {
+			return err
+		}
+		if strings.TrimSpace(c.AgentRuntime.Codex.Command) == "" {
+			return &ValidationError{Code: ErrMissingCodexCommand}
+		}
+	case "opencode":
+		if strings.TrimSpace(c.AgentRuntime.Opencode.Command) == "" {
+			return &ValidationError{Code: ErrMissingOpencodeCommand}
+		}
 	}
 
 	return nil
@@ -339,19 +373,31 @@ func (c *Config) MaxRetryBackoffMS() int {
 func (c *Config) CodexCommand() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.Codex.Command
+	return c.AgentRuntime.Codex.Command
 }
 
 func (c *Config) CodexTurnTimeoutMS() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.Codex.TurnTimeoutMS
+	return c.AgentRuntime.Codex.TurnTimeoutMS
 }
 
 func (c *Config) CodexReadTimeoutMS() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.Codex.ReadTimeoutMS
+	return c.AgentRuntime.Codex.ReadTimeoutMS
+}
+
+func (c *Config) OpencodeCommand() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.AgentRuntime.Opencode.Command
+}
+
+func (c *Config) OpencodePermissionRules() []map[string]any {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return cloneMapList(c.AgentRuntime.Opencode.Permission)
 }
 
 func (c *Config) HookTimeoutMS() int {
@@ -421,10 +467,19 @@ func (c *Config) ObservabilityRenderIntervalMS() int {
 func (c *Config) CodexStallTimeoutMS() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if c.Codex.StallTimeoutMS < 0 {
+	if c.AgentRuntime.Codex.StallTimeoutMS < 0 {
 		return 0
 	}
-	return c.Codex.StallTimeoutMS
+	return c.AgentRuntime.Codex.StallTimeoutMS
+}
+
+func (c *Config) AgentRuntimeKind() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if strings.TrimSpace(c.AgentRuntime.Kind) == "" {
+		return "codex"
+	}
+	return c.AgentRuntime.Kind
 }
 
 func (c *Config) MaxConcurrentAgentsForState(stateName string) int {
@@ -530,7 +585,7 @@ func (c *Config) codexRuntimeSettingsLocked(workspace string) (*CodexRuntimeSett
 }
 
 func (c *Config) resolveCodexApprovalPolicyLocked() (any, error) {
-	switch value := c.Codex.ApprovalPolicy.(type) {
+	switch value := c.AgentRuntime.Codex.ApprovalPolicy.(type) {
 	case nil:
 		return cloneMap(defaultApprovalPolicy), nil
 	case string:
@@ -547,7 +602,7 @@ func (c *Config) resolveCodexApprovalPolicyLocked() (any, error) {
 }
 
 func (c *Config) resolveCodexThreadSandboxLocked() (string, error) {
-	switch value := c.Codex.ThreadSandbox.(type) {
+	switch value := c.AgentRuntime.Codex.ThreadSandbox.(type) {
 	case nil:
 		return defaultThreadSandbox, nil
 	case string:
@@ -562,7 +617,7 @@ func (c *Config) resolveCodexThreadSandboxLocked() (string, error) {
 }
 
 func (c *Config) resolveCodexTurnSandboxPolicyLocked(workspace string) (map[string]any, error) {
-	switch value := c.Codex.TurnSandbox.(type) {
+	switch value := c.AgentRuntime.Codex.TurnSandbox.(type) {
 	case nil:
 		return c.defaultCodexTurnSandboxPolicyLocked(workspace), nil
 	case map[string]any:
@@ -602,7 +657,7 @@ func (c *Config) copyFromLocked(next *Config) {
 	c.Tracker = next.Tracker
 	c.Polling = next.Polling
 	c.Agent = next.Agent
-	c.Codex = next.Codex
+	c.AgentRuntime = next.AgentRuntime
 	c.Hooks = next.Hooks
 	c.Observability = next.Observability
 	c.Server = next.Server
@@ -612,6 +667,25 @@ func (c *Config) copyFromLocked(next *Config) {
 func normalizeTrackerKind(value string) string {
 	trimmed := strings.TrimSpace(strings.ToLower(value))
 	return trimmed
+}
+
+func normalizeAgentRuntimeKind(value string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return "codex"
+	}
+	return trimmed
+}
+
+func codexConfigSource(raw map[string]any) map[string]any {
+	agentRuntimeRaw, _ := getPath(raw, "agent_runtime").(map[string]any)
+	if codexRaw, ok := getPath(agentRuntimeRaw, "codex").(map[string]any); ok && codexRaw != nil {
+		return codexRaw
+	}
+	if legacyRaw, ok := getPath(raw, "codex").(map[string]any); ok && legacyRaw != nil {
+		return legacyRaw
+	}
+	return map[string]any{}
 }
 
 func normalizeIssueState(value string) string {
@@ -664,6 +738,25 @@ func parseStateLimits(value any) map[string]int {
 			continue
 		}
 		result[normalizeIssueState(rawState)] = limit
+	}
+	return result
+}
+
+func parseMapList(value any) []map[string]any {
+	rawList, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]map[string]any, 0, len(rawList))
+	for _, item := range rawList {
+		rawMap, ok := item.(map[string]any)
+		if !ok || rawMap == nil {
+			continue
+		}
+		result = append(result, cloneConfigMap(rawMap))
+	}
+	if len(result) == 0 {
+		return nil
 	}
 	return result
 }
@@ -839,6 +932,43 @@ func normalizeValue(value any) any {
 		result := make([]any, 0, len(v))
 		for _, item := range v {
 			result = append(result, normalizeValue(item))
+		}
+		return result
+	default:
+		return v
+	}
+}
+
+func cloneMapList(input []map[string]any) []map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	result := make([]map[string]any, 0, len(input))
+	for _, item := range input {
+		result = append(result, cloneConfigMap(item))
+	}
+	return result
+}
+
+func cloneConfigMap(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	result := make(map[string]any, len(input))
+	for key, value := range input {
+		result[key] = cloneConfigValue(value)
+	}
+	return result
+}
+
+func cloneConfigValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		return cloneConfigMap(v)
+	case []any:
+		result := make([]any, len(v))
+		for i, item := range v {
+			result[i] = cloneConfigValue(item)
 		}
 		return result
 	default:
