@@ -494,8 +494,8 @@ func loadSnapshotFixture(t *testing.T, name string) string {
 
 	paths := []string{
 		filepath.Join(filepath.Dir(file), "testdata", "status_dashboard_snapshots", name),
-		// Back-compat for local setups that still rely on the sibling symphony repo.
-		filepath.Join(filepath.Dir(file), "..", "..", "..", "symphony", "elixir", "test", "fixtures", "status_dashboard_snapshots", name),
+		// Back-compat for local setups that still rely on the sibling baton repo.
+		filepath.Join(filepath.Dir(file), "..", "..", "..", "baton", "elixir", "test", "fixtures", "status_dashboard_snapshots", name),
 	}
 
 	var raw []byte

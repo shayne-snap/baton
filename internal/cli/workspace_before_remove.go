@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const defaultWorkspaceBeforeRemoveRepo = "openai/symphony"
+const defaultWorkspaceBeforeRemoveRepo = "openai/baton"
 
 const workspaceBeforeRemoveHelp = `Closes open pull requests for the current Git branch.
 
@@ -21,7 +21,7 @@ Usage:
 
     mix workspace.before_remove
     mix workspace.before_remove --branch feature/my-branch
-    mix workspace.before_remove --repo openai/symphony
+    mix workspace.before_remove --repo openai/baton
 `
 
 type workspaceBeforeRemoveOptions struct {

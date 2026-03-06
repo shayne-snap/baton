@@ -459,7 +459,7 @@ func (c *Config) LinearAssignee() string {
 func (c *Config) WorkspaceRoot() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	defaultRoot := filepath.Join(os.TempDir(), "symphony_workspaces")
+	defaultRoot := filepath.Join(os.TempDir(), "baton_workspaces")
 	return resolvePathValue(c.RawConfig, defaultRoot)
 }
 
@@ -575,7 +575,7 @@ func (c *Config) resolveCodexTurnSandboxPolicyLocked(workspace string) (map[stri
 func (c *Config) defaultCodexTurnSandboxPolicyLocked(workspace string) map[string]any {
 	writableRoot := strings.TrimSpace(workspace)
 	if writableRoot == "" {
-		defaultRoot := filepath.Join(os.TempDir(), "symphony_workspaces")
+		defaultRoot := filepath.Join(os.TempDir(), "baton_workspaces")
 		writableRoot = resolvePathValue(c.RawConfig, defaultRoot)
 	}
 	writableRoot = filepath.Clean(writableRoot)

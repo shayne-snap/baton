@@ -331,7 +331,7 @@ func RenderOfflineStatus(output io.Writer) error {
 		output = os.Stdout
 	}
 	content := strings.Join([]string{
-		colorize("╭─ SYMPHONY STATUS", ansiBold),
+		colorize("╭─ BATON STATUS", ansiBold),
 		colorize("│ app_status=offline", ansiRed),
 		closingBorder(),
 	}, "\n")
@@ -342,7 +342,7 @@ func RenderOfflineStatus(output io.Writer) error {
 func FormatSnapshotContentForTest(snapshotData map[string]any, tps float64, opts RenderOptions) string {
 	if snapshotData == nil {
 		lines := []string{
-			colorize("╭─ SYMPHONY STATUS", ansiBold),
+			colorize("╭─ BATON STATUS", ansiBold),
 			colorize("│ Orchestrator snapshot unavailable", ansiRed),
 			colorize("│ Throughput: ", ansiBold) + colorize(fmt.Sprintf("%s tps", formatTPS(tps)), ansiCyan),
 		}
@@ -360,7 +360,7 @@ func FormatSnapshotContentForTest(snapshotData map[string]any, tps float64, opts
 	runningEventWidth := runningEventWidth(terminalColumns)
 
 	lines := []string{
-		colorize("╭─ SYMPHONY STATUS", ansiBold),
+		colorize("╭─ BATON STATUS", ansiBold),
 		colorize("│ Agents: ", ansiBold) + colorize(fmt.Sprintf("%d", len(running)), ansiGreen) + colorize("/", ansiGray) + colorize(fmt.Sprintf("%d", opts.MaxConcurrentAgents), ansiGray),
 		colorize("│ Throughput: ", ansiBold) + colorize(fmt.Sprintf("%s tps", formatTPS(tps)), ansiCyan),
 		colorize("│ Runtime: ", ansiBold) + colorize(formatRuntimeSeconds(intValue(codexTotals["seconds_running"])), ansiMagenta),

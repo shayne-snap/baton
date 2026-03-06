@@ -31,8 +31,8 @@ func NewRootCommand() *cobra.Command {
 	opts := &options{}
 
 	cmd := &cobra.Command{
-		Use:   "symphony [path-to-WORKFLOW.md]",
-		Short: "Symphony is a local orchestration service for coding-agent runs.",
+		Use:   "baton [path-to-WORKFLOW.md]",
+		Short: "Baton is a local orchestration service for coding-agent runs.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 1 {
 				return errors.New(usageMessage())
@@ -107,14 +107,14 @@ func run(parent context.Context, opts *options) error {
 }
 
 func usageMessage() string {
-	return "Usage: symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+	return "Usage: baton [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
 }
 
 func acknowledgementBanner() string {
 	lines := []string{
-		"This Symphony implementation is a low key engineering preview.",
+		"This Baton implementation is a low key engineering preview.",
 		"Codex will run without any guardrails.",
-		"SymphonyElixir is not a supported product and is presented as-is.",
+		"BatonElixir is not a supported product and is presented as-is.",
 		fmt.Sprintf("To proceed, start with `--%s` CLI argument", acknowledgementFlag),
 	}
 

@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	defaultLogRelativePath = "log/symphony.log"
+	defaultLogRelativePath = "log/baton.log"
 	defaultMaxBytes        = int64(10 * 1024 * 1024)
 	defaultMaxFiles        = 5
 )

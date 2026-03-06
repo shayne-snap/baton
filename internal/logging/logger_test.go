@@ -12,15 +12,15 @@ func TestDefaultLogFileUsesCurrentWorkingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getwd failed: %v", err)
 	}
-	expected := filepath.Join(cwd, "log", "symphony.log")
+	expected := filepath.Join(cwd, "log", "baton.log")
 	if got := DefaultLogFile(""); got != expected {
 		t.Fatalf("unexpected default log file path: got=%s expected=%s", got, expected)
 	}
 }
 
 func TestDefaultLogFileUnderCustomRoot(t *testing.T) {
-	root := "/tmp/symphony-logs"
-	expected := "/tmp/symphony-logs/log/symphony.log"
+	root := "/tmp/baton-logs"
+	expected := "/tmp/baton-logs/log/baton.log"
 	if got := DefaultLogFile(root); got != expected {
 		t.Fatalf("unexpected custom log file path: got=%s expected=%s", got, expected)
 	}
@@ -28,7 +28,7 @@ func TestDefaultLogFileUnderCustomRoot(t *testing.T) {
 
 func TestRotatingFileWriterRotatesBySize(t *testing.T) {
 	temp := t.TempDir()
-	path := filepath.Join(temp, "log", "symphony.log")
+	path := filepath.Join(temp, "log", "baton.log")
 
 	writer, err := NewRotatingFileWriter(path, 32, 3)
 	if err != nil {

@@ -98,7 +98,7 @@ func TestStateIssueRefreshPayloads(t *testing.T) {
 				"operations":   []string{"poll", "reconcile"},
 			},
 		},
-		WorkspaceRoot: "/tmp/symphony_workspaces",
+		WorkspaceRoot: "/tmp/baton_workspaces",
 		LogsRoot:      logsRoot,
 	})
 
@@ -120,7 +120,7 @@ func TestStateIssueRefreshPayloads(t *testing.T) {
 	assertEqual(t, issue["issue_identifier"], "MT-HTTP")
 	assertEqual(t, issue["issue_id"], "issue-http")
 	assertEqual(t, issue["status"], "running")
-	assertEqual(t, issue["workspace"], map[string]any{"path": filepath.Join("/tmp/symphony_workspaces", "MT-HTTP")})
+	assertEqual(t, issue["workspace"], map[string]any{"path": filepath.Join("/tmp/baton_workspaces", "MT-HTTP")})
 	assertEqual(t, issue["attempts"], map[string]any{"restart_count": float64(0), "current_retry_attempt": float64(0)})
 	logs := issue["logs"].(map[string]any)["codex_session_logs"].([]any)
 	if len(logs) < 1 {
@@ -273,7 +273,7 @@ func TestStateUsesHumanizedMessageForNilAndStructuredEvents(t *testing.T) {
 				"rate_limits":  nil,
 			},
 		},
-		WorkspaceRoot: "/tmp/symphony_workspaces",
+		WorkspaceRoot: "/tmp/baton_workspaces",
 	})
 
 	ts := httptest.NewServer(h)

@@ -76,13 +76,13 @@ exit 0
 			t.Fatalf("read log: %v", err)
 		}
 		log := string(raw)
-		if !strings.Contains(log, "pr list --repo openai/symphony --head feature/workpad --state open --json number --jq .[].number") {
+		if !strings.Contains(log, "pr list --repo openai/baton --head feature/workpad --state open --json number --jq .[].number") {
 			t.Fatalf("missing list command in log: %q", log)
 		}
-		if !strings.Contains(log, "pr close 101 --repo openai/symphony") {
+		if !strings.Contains(log, "pr close 101 --repo openai/baton") {
 			t.Fatalf("missing close 101 in log: %q", log)
 		}
-		if !strings.Contains(log, "pr close 102 --repo openai/symphony") {
+		if !strings.Contains(log, "pr close 102 --repo openai/baton") {
 			t.Fatalf("missing close 102 in log: %q", log)
 		}
 	})

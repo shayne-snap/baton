@@ -153,7 +153,7 @@ func TestConfigEnvResolution(t *testing.T) {
 func TestWorkspaceRootPathResolution(t *testing.T) {
 	t.Parallel()
 
-	defaultRoot := filepath.Join(os.TempDir(), "symphony_workspaces")
+	defaultRoot := filepath.Join(os.TempDir(), "baton_workspaces")
 	cfg := mustConfig(t, map[string]any{"tracker": map[string]any{"kind": "memory"}}, "")
 	if got := cfg.WorkspaceRoot(); got != defaultRoot {
 		t.Fatalf("default workspace root mismatch: %q", got)

@@ -61,7 +61,7 @@ func TestRootCommandRejectsEmptyExplicitLogsRoot(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected usage error for empty explicit logs root")
 	}
-	if !strings.Contains(err.Error(), "Usage: symphony") {
+	if !strings.Contains(err.Error(), "Usage: baton") {
 		t.Fatalf("expected usage error, got %v", err)
 	}
 }
@@ -82,7 +82,7 @@ func TestRootCommandRejectsNegativeExplicitPort(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected usage error for negative explicit port")
 	}
-	if !strings.Contains(err.Error(), "Usage: symphony") {
+	if !strings.Contains(err.Error(), "Usage: baton") {
 		t.Fatalf("expected usage error, got %v", err)
 	}
 }
@@ -104,7 +104,7 @@ func TestRootCommandRejectsMultiplePositionalWorkflowPaths(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected usage error for multiple workflow paths")
 	}
-	if !strings.Contains(err.Error(), "Usage: symphony") {
+	if !strings.Contains(err.Error(), "Usage: baton") {
 		t.Fatalf("expected usage error, got %v", err)
 	}
 }
