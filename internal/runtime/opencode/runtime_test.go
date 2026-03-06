@@ -108,8 +108,6 @@ func TestRuntimeRunTurnCompletesFromSessionIdle(t *testing.T) {
 }
 
 func TestRuntimeRunTurnCompletesFromStatusPollWhenIdleEventMissing(t *testing.T) {
-	t.Parallel()
-
 	testRoot := t.TempDir()
 	workspaceRoot := filepath.Join(testRoot, "workspaces")
 	workspace := filepath.Join(workspaceRoot, "OC-7")
@@ -339,8 +337,6 @@ func TestRuntimeRunTurnIncludesToolErrorDetails(t *testing.T) {
 }
 
 func TestRuntimeRunTurnFailsFastWhenStatusPollFindsAssistantError(t *testing.T) {
-	t.Parallel()
-
 	testRoot := t.TempDir()
 	workspaceRoot := filepath.Join(testRoot, "workspaces")
 	workspace := filepath.Join(workspaceRoot, "OC-8")
