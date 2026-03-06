@@ -620,10 +620,43 @@ func (a *AppServer) awaitResponse(session *Session, requestID int) (map[string]a
 			return result, nil
 
 		case err := <-session.exitCh:
-			return nil, &PortExitError{Status: exitStatus(err)}
+			status := exitStatus(err)
+			if status == 0 {
+				if result, ok, consumeErr := a.consumeBufferedResponse(session, requestID); consumeErr != nil {
+					return nil, consumeErr
+				} else if ok {
+					return result, nil
+				}
+			}
+			return nil, &PortExitError{Status: status}
 
 		case <-time.After(timeout):
 			return nil, &TurnError{Code: ErrResponseTimeout}
+		}
+	}
+}
+
+func (a *AppServer) consumeBufferedResponse(session *Session, requestID int) (map[string]any, bool, error) {
+	for {
+		select {
+		case line := <-session.msgCh:
+			if line.err != nil {
+				logNonJSONStreamLine(line.raw, "response stream")
+				continue
+			}
+			if !matchesRequestID(line.payload["id"], requestID) {
+				continue
+			}
+			if responseErr, hasErr := line.payload["error"]; hasErr {
+				return nil, true, &ResponseError{Payload: responseErr}
+			}
+			result, hasResult := line.payload["result"].(map[string]any)
+			if !hasResult {
+				return nil, true, &ResponseError{Payload: line.payload}
+			}
+			return result, true, nil
+		default:
+			return nil, false, nil
 		}
 	}
 }

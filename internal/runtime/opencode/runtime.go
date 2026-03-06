@@ -186,6 +186,10 @@ func (r *Runtime) RunTurn(sess runtime.Session, prompt string, issue tracker.Iss
 			opencodeSession.abortTurn(context.Background())
 			return nil, ctx.Err()
 		case <-statusTicker.C:
+			if err := ctx.Err(); err != nil {
+				opencodeSession.abortTurn(context.Background())
+				return nil, err
+			}
 			done, result, err := opencodeSession.checkTurnState(ctx, syntheticSessionID, turnID, promptMessageID, opts.OnMessage)
 			if err != nil {
 				return nil, err
@@ -573,6 +577,9 @@ func (s *session) checkTurnState(
 	promptMessageID string,
 	handler runtime.MessageHandler,
 ) (bool, *runtime.TurnResult, error) {
+	if err := ctx.Err(); err != nil {
+		return false, nil, err
+	}
 	status, err := s.fetchSessionStatus(ctx)
 	if err != nil {
 		return false, nil, nil
