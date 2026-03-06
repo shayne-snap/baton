@@ -522,6 +522,7 @@ func TestAppServerEmitsSupportedDynamicToolFailureEvent(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
+	t.Setenv("LINEAR_API_KEY", "")
 
 	traceFile := filepath.Join(testRoot, "codex-supported-tool-failure.trace")
 	codexBinary := filepath.Join(testRoot, "fake-codex")
