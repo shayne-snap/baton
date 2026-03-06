@@ -208,9 +208,9 @@ func (a *AppServer) StartSession(workspace string) (*Session, error) {
 		threadSandbox:     settings.ThreadSandbox,
 		turnSandboxPolicy: settings.TurnSandboxPolicy,
 		workspace:         absWorkspace,
-	metadata: map[string]any{
-		"codex_app_server_pid": fmt.Sprintf("%d", cmd.Process.Pid),
-	},
+		metadata: map[string]any{
+			"codex_app_server_pid": fmt.Sprintf("%d", cmd.Process.Pid),
+		},
 	}
 
 	go session.readStdout(stdout)

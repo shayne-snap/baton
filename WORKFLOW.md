@@ -19,7 +19,7 @@ workspace:
   root: ~/code/baton-workspaces
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/shayne-snap/baton .
+    git clone --depth 1 --branch main https://github.com/shayne-snap/baton .
     if command -v go >/dev/null 2>&1; then
       go mod download
     fi
