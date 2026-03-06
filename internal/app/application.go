@@ -217,6 +217,7 @@ func (a *Application) Run(ctx context.Context) error {
 			SnapshotTimeout: 15 * time.Second,
 			WorkspaceRoot:   a.config.WorkspaceRoot(),
 			LogsRoot:        a.logsRoot,
+			RuntimeKind:     a.config.AgentRuntimeKind(),
 		})
 		server := &http.Server{Handler: handler}
 		shutdownServer = server.Shutdown

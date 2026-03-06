@@ -28,6 +28,7 @@ type HandlerOptions struct {
 	SnapshotTimeout time.Duration
 	WorkspaceRoot   string
 	LogsRoot        string
+	RuntimeKind     string
 }
 
 type Handler struct {
@@ -35,6 +36,7 @@ type Handler struct {
 	snapshotTimeout time.Duration
 	workspaceRoot   string
 	logsRoot        string
+	runtimeKind     string
 }
 
 func NewHandler(opts HandlerOptions) http.Handler {
@@ -48,6 +50,7 @@ func NewHandler(opts HandlerOptions) http.Handler {
 		snapshotTimeout: timeout,
 		workspaceRoot:   opts.WorkspaceRoot,
 		logsRoot:        opts.LogsRoot,
+		runtimeKind:     opts.RuntimeKind,
 	}
 }
 
@@ -426,7 +429,7 @@ func cloneMap(input map[string]any) map[string]any {
 }
 
 func (h *Handler) codexSessionLogs(issueIdentifier string) []any {
-	logsDir := logging.CodexIssueLogsDir(h.logsRoot, issueIdentifier)
+	logsDir := logging.IssueLogsDir(h.logsRoot, h.runtimeKind, issueIdentifier)
 
 	entries := make([]any, 0, 4)
 	latestPath := filepath.Join(logsDir, "latest.log")
