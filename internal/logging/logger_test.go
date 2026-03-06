@@ -26,6 +26,22 @@ func TestDefaultLogFileUnderCustomRoot(t *testing.T) {
 	}
 }
 
+func TestIssueLogsDir(t *testing.T) {
+	root := "/tmp/logs"
+	kind := "opencode"
+	issue := "BAC-13"
+	expected := "/tmp/logs/log/opencode/BAC-13"
+	if got := IssueLogsDir(root, kind, issue); got != expected {
+		t.Fatalf("unexpected issue logs dir: got=%s expected=%s", got, expected)
+	}
+
+	kind = "codex"
+	expected = "/tmp/logs/log/codex/BAC-13"
+	if got := IssueLogsDir(root, kind, issue); got != expected {
+		t.Fatalf("unexpected issue logs dir: got=%s expected=%s", got, expected)
+	}
+}
+
 func TestRotatingFileWriterRotatesBySize(t *testing.T) {
 	temp := t.TempDir()
 	path := filepath.Join(temp, "log", "baton.log")

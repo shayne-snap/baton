@@ -67,8 +67,8 @@ func SafePathComponent(value string) string {
 	return safe
 }
 
-func CodexIssueLogsDir(logsRoot string, issueIdentifier string) string {
-	return filepath.Join(ResolveLogsRoot(logsRoot), "log", "codex", SafePathComponent(issueIdentifier))
+func IssueLogsDir(logsRoot string, runtimeKind string, issueIdentifier string) string {
+	return filepath.Join(ResolveLogsRoot(logsRoot), "log", runtimeKind, SafePathComponent(issueIdentifier))
 }
 
 func NewDefault(opts Options) zerolog.Logger {

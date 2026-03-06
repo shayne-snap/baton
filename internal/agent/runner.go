@@ -97,7 +97,7 @@ func (r *runner) Run(ctx context.Context, issue tracker.Issue, opts RunOptions) 
 	}
 	defer r.agentRuntime.StopSession(session)
 
-	sessionLogger := newSessionLogWriter(r.logsRoot, issue.Identifier)
+	sessionLogger := newSessionLogWriter(r.logsRoot, r.config.AgentRuntimeKind(), issue.Identifier)
 	defer sessionLogger.Close()
 
 	currentIssue := issue

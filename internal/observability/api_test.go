@@ -42,7 +42,7 @@ func TestStateIssueRefreshPayloads(t *testing.T) {
 	startedAt := time.Date(2026, 3, 5, 10, 0, 0, 0, time.UTC)
 	requestedAt := time.Date(2026, 3, 5, 10, 1, 12, 0, time.UTC)
 	logsRoot := t.TempDir()
-	issueLogsDir := logging.CodexIssueLogsDir(logsRoot, "MT-HTTP")
+	issueLogsDir := logging.IssueLogsDir(logsRoot, "codex", "MT-HTTP")
 	if err := os.MkdirAll(issueLogsDir, 0o755); err != nil {
 		t.Fatalf("mkdir issue logs dir: %v", err)
 	}
@@ -100,6 +100,7 @@ func TestStateIssueRefreshPayloads(t *testing.T) {
 		},
 		WorkspaceRoot: "/tmp/baton_workspaces",
 		LogsRoot:      logsRoot,
+		RuntimeKind:   "codex",
 	})
 
 	ts := httptest.NewServer(h)
@@ -171,6 +172,7 @@ func TestUnavailableAndTimeoutErrors(t *testing.T) {
 			snapshotErr: orchestrator.ErrOrchestratorUnavailable,
 			refreshErr:  orchestrator.ErrOrchestratorUnavailable,
 		},
+		RuntimeKind: "codex",
 	})
 
 	tsUnavailable := httptest.NewServer(unavailable)
@@ -197,6 +199,7 @@ func TestUnavailableAndTimeoutErrors(t *testing.T) {
 
 	timeout := NewHandler(HandlerOptions{
 		Orchestrator: &orchestratorStub{snapshotErr: orchestrator.ErrSnapshotTimeout},
+		RuntimeKind:  "codex",
 	})
 	tsTimeout := httptest.NewServer(timeout)
 	defer tsTimeout.Close()
@@ -274,6 +277,7 @@ func TestStateUsesHumanizedMessageForNilAndStructuredEvents(t *testing.T) {
 			},
 		},
 		WorkspaceRoot: "/tmp/baton_workspaces",
+		RuntimeKind:   "codex",
 	})
 
 	ts := httptest.NewServer(h)
@@ -300,6 +304,7 @@ func TestStatePassesThroughNilCodexTotals(t *testing.T) {
 				"rate_limits":  nil,
 			},
 		},
+		RuntimeKind: "codex",
 	})
 
 	ts := httptest.NewServer(h)
@@ -312,7 +317,10 @@ func TestStatePassesThroughNilCodexTotals(t *testing.T) {
 func TestMethodNotAllowedAndNotFound(t *testing.T) {
 	t.Parallel()
 
-	h := NewHandler(HandlerOptions{Orchestrator: &orchestratorStub{snapshotPayload: map[string]any{"running": []map[string]any{}, "retrying": []map[string]any{}, "codex_totals": map[string]any{}, "rate_limits": nil}}})
+	h := NewHandler(HandlerOptions{
+		Orchestrator: &orchestratorStub{snapshotPayload: map[string]any{"running": []map[string]any{}, "retrying": []map[string]any{}, "codex_totals": map[string]any{}, "rate_limits": nil}},
+		RuntimeKind:  "codex",
+	})
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
