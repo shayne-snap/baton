@@ -36,7 +36,7 @@ var (
 )
 
 const linearQuery = `
-query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
+query BatonLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
   issues(filter: {project: {slugId: {eq: $projectSlug}}, state: {name: {in: $stateNames}}}, first: $first, after: $after) {
     nodes {
       id
@@ -63,7 +63,7 @@ query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first:
 }`
 
 const linearQueryByIDs = `
-query SymphonyLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
+query BatonLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
   issues(filter: {id: {in: $ids}}, first: $first) {
     nodes {
       id
@@ -89,26 +89,26 @@ query SymphonyLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!)
 }`
 
 const viewerQuery = `
-query SymphonyLinearViewer {
+query BatonLinearViewer {
   viewer { id }
 }`
 
 const createCommentMutation = `
-mutation SymphonyCreateComment($issueId: String!, $body: String!) {
+mutation BatonCreateComment($issueId: String!, $body: String!) {
   commentCreate(input: {issueId: $issueId, body: $body}) {
     success
   }
 }`
 
 const updateStateMutation = `
-mutation SymphonyUpdateIssueState($issueId: String!, $stateId: String!) {
+mutation BatonUpdateIssueState($issueId: String!, $stateId: String!) {
   issueUpdate(id: $issueId, input: {stateId: $stateId}) {
     success
   }
 }`
 
 const stateLookupQuery = `
-query SymphonyResolveStateId($issueId: String!, $stateName: String!) {
+query BatonResolveStateId($issueId: String!, $stateName: String!) {
   issue(id: $issueId) {
     team {
       states(filter: {name: {eq: $stateName}}, first: 1) {
