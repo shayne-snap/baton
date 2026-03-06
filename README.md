@@ -1,6 +1,6 @@
 # Baton
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+[简体中文](README.zh-CN.md)
 
 Baton is a Go implementation of [Symphony](https://github.com/openai/symphony).
 
