@@ -19,12 +19,12 @@ type sessionLogWriter struct {
 	latestFile *os.File
 }
 
-func newSessionLogWriter(logsRoot string, issueIdentifier string) *sessionLogWriter {
+func newSessionLogWriter(logsRoot string, issueIdentifier string, runtimeKind string) *sessionLogWriter {
 	if strings.TrimSpace(logsRoot) == "" {
 		return &sessionLogWriter{}
 	}
 
-	logsDir := logging.CodexIssueLogsDir(logsRoot, issueIdentifier)
+	logsDir := logging.IssueLogsDir(logsRoot, runtimeKind, issueIdentifier)
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return &sessionLogWriter{}
 	}
