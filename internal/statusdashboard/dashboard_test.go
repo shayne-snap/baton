@@ -205,6 +205,33 @@ func TestDashboardURLHostNormalization(t *testing.T) {
 	}
 }
 
+func TestProjectLinkUsesTrackerKind(t *testing.T) {
+	emptySnapshot := map[string]any{
+		"running":      []any{},
+		"retrying":     []any{},
+		"codex_totals": map[string]any{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "seconds_running": 0},
+	}
+
+	jiraRendered := FormatSnapshotContentForTest(emptySnapshot, 0, RenderOptions{
+		TrackerKind:    "jira",
+		JiraBaseURL:    "https://example.atlassian.net",
+		JiraProjectKey: "KAN",
+	})
+	jiraPlain := stripANSI(jiraRendered)
+	if !strings.Contains(jiraPlain, "https://example.atlassian.net/jira/software/projects/KAN/issues") {
+		t.Fatalf("expected jira project url, got: %s", jiraPlain)
+	}
+
+	linearRendered := FormatSnapshotContentForTest(emptySnapshot, 0, RenderOptions{
+		TrackerKind:       "linear",
+		LinearProjectSlug: "baton",
+	})
+	linearPlain := stripANSI(linearRendered)
+	if !strings.Contains(linearPlain, "https://linear.app/project/baton/issues") {
+		t.Fatalf("expected linear project url, got: %s", linearPlain)
+	}
+}
+
 func TestRenderOfflineStatus(t *testing.T) {
 	var buf bytes.Buffer
 	if err := RenderOfflineStatus(&buf); err != nil {
@@ -568,9 +595,16 @@ func mustConfig(t *testing.T) *config.Config {
 	def := &workflow.Definition{
 		Config: map[string]any{
 			"tracker": map[string]any{
-				"kind":         "memory",
-				"project_slug": "project",
-				"api_key":      "token",
+				"kind": "memory",
+				"lifecycle": map[string]any{
+					"backlog":      "Backlog",
+					"todo":         "Todo",
+					"in_progress":  "In Progress",
+					"human_review": "In Review",
+					"merging":      "Merging",
+					"rework":       "Rework",
+					"done":         "Done",
+				},
 			},
 			"workspace": map[string]any{
 				"root": t.TempDir(),
@@ -605,6 +639,7 @@ func runningEntry(overrides map[string]any) map[string]any {
 	base := map[string]any{
 		"identifier":           "MT-000",
 		"state":                "running",
+		"runtime_kind":         "codex",
 		"session_id":           "thread-1234567890",
 		"codex_app_server_pid": "4242",
 		"codex_total_tokens":   0,

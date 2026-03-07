@@ -68,7 +68,7 @@ agent_runtime:
 Runtime configuration notes:
 
 - Baton now prefers `agent_runtime` for selecting the backend that executes agent turns.
-- Supported values today are `codex`, `opencode`, and `claudecode`.
+- Supported values today are `codex` and `opencode`.
 - The legacy top-level `codex:` block is still accepted for backward compatibility, but new workflows should use `agent_runtime`.
 
 Example `opencode` runtime configuration:
@@ -78,17 +78,6 @@ agent_runtime:
   kind: opencode
   opencode:
     command: opencode serve
-```
-
-Example `claudecode` runtime configuration:
-
-```yaml
-agent_runtime:
-  kind: claudecode
-  claudecode:
-    command: claude
-    permission_mode: dontAsk
-    mcp_strict: true
 ```
 
 You are working on a tracker ticket `{{ issue.identifier }}`

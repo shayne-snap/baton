@@ -107,6 +107,52 @@ func TestRuntimeRunTurnCompletesFromSessionIdle(t *testing.T) {
 	assertUpdateEvent(t, updates, "turn_completed")
 }
 
+func TestRuntimeRunTurnIgnoresReasoningPartNotFoundSessionError(t *testing.T) {
+	t.Parallel()
+
+	testRoot := t.TempDir()
+	workspaceRoot := filepath.Join(testRoot, "workspaces")
+	workspace := filepath.Join(workspaceRoot, "OC-1-ignored-session-error")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	events := make(chan string, 8)
+	server := newFakeOpencodeServer(t, events, fakeOpencodeHandlers{
+		promptAsync: func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(t, w, map[string]any{"id": "msg-user-1"})
+			events <- `{"directory":"` + workspace + `","payload":{"type":"message.updated","properties":{"info":{"id":"msg-assistant-1","sessionID":"sess-1","role":"assistant","tokens":{"input":3,"output":2,"total":5}}}}}`
+			events <- `{"directory":"` + workspace + `","payload":{"type":"session.error","properties":{"sessionID":"sess-1","error":{"message":"reasoning part reasoning-abc not found"}}}}`
+			events <- `{"directory":"` + workspace + `","payload":{"type":"message.part.updated","properties":{"part":{"id":"part-text-1","sessionID":"sess-1","messageID":"msg-assistant-1","type":"text"}}}}`
+			events <- `{"directory":"` + workspace + `","payload":{"type":"message.part.delta","properties":{"sessionID":"sess-1","messageID":"msg-assistant-1","partID":"part-text-1","field":"text","delta":"hello"}}}`
+			events <- `{"directory":"` + workspace + `","payload":{"type":"session.status","properties":{"sessionID":"sess-1","status":{"type":"idle"}}}}`
+		},
+	})
+	defer server.Close()
+
+	command := writeServeScript(t, testRoot, server.URL)
+	cfg := mustOpencodeConfig(t, workspaceRoot, command)
+	client := New(cfg)
+
+	sess, err := client.StartSession(workspace)
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	defer client.StopSession(sess)
+
+	var updates []runtime.Update
+	_, err = client.RunTurn(sess, "ignore transient session error", tracker.Issue{ID: "issue-1", Identifier: "OC-1"}, runtime.RunTurnOptions{
+		OnMessage: func(update runtime.Update) {
+			updates = append(updates, update)
+		},
+	})
+	if err != nil {
+		t.Fatalf("run turn should succeed despite ignorable session error, got: %v", err)
+	}
+
+	assertUpdateEvent(t, updates, "turn_completed")
+}
+
 func TestRuntimeRunTurnCompletesFromStatusPollWhenIdleEventMissing(t *testing.T) {
 	testRoot := t.TempDir()
 	workspaceRoot := filepath.Join(testRoot, "workspaces")
@@ -233,7 +279,7 @@ func TestRuntimeStartSessionUsesConfiguredPermissionRules(t *testing.T) {
 	}
 }
 
-func TestRuntimeStartSessionConfiguresLinearMCPServer(t *testing.T) {
+func TestRuntimeStartSessionConfiguresLinearTrackerMCPServer(t *testing.T) {
 	t.Parallel()
 
 	testRoot := t.TempDir()
@@ -270,17 +316,119 @@ func TestRuntimeStartSessionConfiguresLinearMCPServer(t *testing.T) {
 		t.Fatalf("read generated opencode config: %v", err)
 	}
 	text := string(content)
-	if !strings.Contains(text, `"linear"`) {
-		t.Fatalf("missing linear mcp server config: %s", text)
+	if !strings.Contains(text, `"tracker"`) {
+		t.Fatalf("missing tracker mcp server config: %s", text)
 	}
-	if !strings.Contains(text, `"mcp-linear-server"`) {
-		t.Fatalf("missing baton mcp command in config: %s", text)
+	if !strings.Contains(text, `"mcp-tracker-server"`) {
+		t.Fatalf("missing baton tracker mcp command in config: %s", text)
+	}
+	if !strings.Contains(text, `{env:BATON_TRACKER_KIND}`) {
+		t.Fatalf("expected config to use env var indirection for tracker kind: %s", text)
 	}
 	if !strings.Contains(text, `{env:BATON_LINEAR_API_KEY}`) {
 		t.Fatalf("expected config to use env var indirection for api key: %s", text)
 	}
 	if _, err := os.Stat(filepath.Join(workspace, ".opencode", "tools", "linear_graphql.js")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no workspace custom tool to be installed, stat err=%v", err)
+	}
+}
+
+func TestRuntimeStartSessionConfiguresJiraTrackerMCPServer(t *testing.T) {
+	t.Parallel()
+
+	testRoot := t.TempDir()
+	workspaceRoot := filepath.Join(testRoot, "workspaces")
+	workspace := filepath.Join(workspaceRoot, "OC-7")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	events := make(chan string, 1)
+	server := newFakeOpencodeServer(t, events, fakeOpencodeHandlers{})
+	defer server.Close()
+
+	command := writeServeScript(t, testRoot, server.URL)
+	cfg := mustOpencodeJiraConfig(t, workspaceRoot, command)
+	client := New(cfg)
+
+	sess, err := client.StartSession(workspace)
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	defer client.StopSession(sess)
+
+	runtimeSession, ok := sess.(*session)
+	if !ok {
+		t.Fatalf("unexpected session type: %T", sess)
+	}
+	if strings.TrimSpace(runtimeSession.configDir) == "" {
+		t.Fatal("expected temporary opencode config dir to be created")
+	}
+
+	content, err := os.ReadFile(filepath.Join(runtimeSession.configDir, "opencode.json"))
+	if err != nil {
+		t.Fatalf("read generated opencode config: %v", err)
+	}
+	text := string(content)
+	if !strings.Contains(text, `"tracker"`) {
+		t.Fatalf("missing tracker mcp server config: %s", text)
+	}
+	if !strings.Contains(text, `"mcp-tracker-server"`) {
+		t.Fatalf("missing baton tracker mcp command in config: %s", text)
+	}
+	if !strings.Contains(text, `{env:BATON_JIRA_BASE_URL}`) {
+		t.Fatalf("expected config to use env var indirection for jira base url: %s", text)
+	}
+}
+
+func TestRuntimeStartSessionConfiguresFeishuTrackerMCPServer(t *testing.T) {
+	t.Parallel()
+
+	testRoot := t.TempDir()
+	workspaceRoot := filepath.Join(testRoot, "workspaces")
+	workspace := filepath.Join(workspaceRoot, "OC-8")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("mkdir workspace: %v", err)
+	}
+
+	events := make(chan string, 1)
+	server := newFakeOpencodeServer(t, events, fakeOpencodeHandlers{})
+	defer server.Close()
+
+	command := writeServeScript(t, testRoot, server.URL)
+	cfg := mustOpencodeFeishuConfig(t, workspaceRoot, command)
+	client := New(cfg)
+
+	sess, err := client.StartSession(workspace)
+	if err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	defer client.StopSession(sess)
+
+	runtimeSession, ok := sess.(*session)
+	if !ok {
+		t.Fatalf("unexpected session type: %T", sess)
+	}
+	if strings.TrimSpace(runtimeSession.configDir) == "" {
+		t.Fatal("expected temporary opencode config dir to be created")
+	}
+
+	content, err := os.ReadFile(filepath.Join(runtimeSession.configDir, "opencode.json"))
+	if err != nil {
+		t.Fatalf("read generated opencode config: %v", err)
+	}
+	text := string(content)
+	if !strings.Contains(text, `"tracker"`) {
+		t.Fatalf("missing tracker mcp server config: %s", text)
+	}
+	if !strings.Contains(text, `"mcp-tracker-server"`) {
+		t.Fatalf("missing baton tracker mcp command in config: %s", text)
+	}
+	if !strings.Contains(text, `{env:BATON_FEISHU_BASE_URL}`) {
+		t.Fatalf("expected config to use env var indirection for feishu base url: %s", text)
+	}
+	if !strings.Contains(text, `{env:BATON_FEISHU_APP_SECRET}`) {
+		t.Fatalf("expected config to use env var indirection for feishu app secret: %s", text)
 	}
 }
 
@@ -662,9 +810,90 @@ func mustOpencodeLinearConfig(t *testing.T, workspaceRoot string, command string
 		&workflow.Definition{
 			Config: map[string]any{
 				"tracker": map[string]any{
-					"kind":         "linear",
-					"api_key":      "linear-token",
-					"project_slug": "baton",
+					"kind": "linear",
+					"linear": map[string]any{
+						"api_key":      "linear-token",
+						"project_slug": "baton",
+					},
+				},
+				"workspace": map[string]any{
+					"root": workspaceRoot,
+				},
+				"agent_runtime": map[string]any{
+					"kind": "opencode",
+					"opencode": map[string]any{
+						"command": command,
+					},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("FromWorkflow failed: %v", err)
+	}
+	return cfg
+}
+
+func mustOpencodeJiraConfig(t *testing.T, workspaceRoot string, command string) *config.Config {
+	t.Helper()
+	cfg, err := config.FromWorkflow(
+		filepath.Join(t.TempDir(), "WORKFLOW.md"),
+		&workflow.Definition{
+			Config: map[string]any{
+				"tracker": map[string]any{
+					"kind": "jira",
+					"jira": map[string]any{
+						"base_url":    "https://example.atlassian.net",
+						"project_key": "KAN",
+						"jql":         "key = KAN-4",
+						"auth": map[string]any{
+							"type":      "email_api_token",
+							"email":     "jira@example.com",
+							"api_token": "jira-token",
+						},
+					},
+					"lifecycle": map[string]any{
+						"backlog":      "Backlog",
+						"todo":         "To Do",
+						"in_progress":  "In Progress",
+						"human_review": "In Review",
+						"merging":      "Ready to Merge",
+						"rework":       "Rework",
+						"done":         "Done",
+					},
+				},
+				"workspace": map[string]any{
+					"root": workspaceRoot,
+				},
+				"agent_runtime": map[string]any{
+					"kind": "opencode",
+					"opencode": map[string]any{
+						"command": command,
+					},
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("FromWorkflow failed: %v", err)
+	}
+	return cfg
+}
+
+func mustOpencodeFeishuConfig(t *testing.T, workspaceRoot string, command string) *config.Config {
+	t.Helper()
+	cfg, err := config.FromWorkflow(
+		filepath.Join(t.TempDir(), "WORKFLOW.md"),
+		&workflow.Definition{
+			Config: map[string]any{
+				"tracker": map[string]any{
+					"kind": "feishu",
+					"feishu": map[string]any{
+						"base_url":    "https://open.feishu.cn",
+						"project_key": "BAT",
+						"app_id":      "feishu-app-id",
+						"app_secret":  "feishu-app-secret",
+					},
 				},
 				"workspace": map[string]any{
 					"root": workspaceRoot,

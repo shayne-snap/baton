@@ -89,6 +89,28 @@ func TestPromptBuilderUsesDefaultWhenWorkflowPromptBlank(t *testing.T) {
 	}
 }
 
+func TestPromptBuilderRendersTrackerLifecycleBindings(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustPromptConfig(t, "review={{ tracker.lifecycle.human_review }} done={{ tracker.lifecycle.done }} kind={{ tracker.kind }}")
+	builder := NewBuilder(cfg)
+
+	prompt, err := builder.BuildPrompt(tracker.Issue{Identifier: "S-3"}, nil)
+	if err != nil {
+		t.Fatalf("build prompt failed: %v", err)
+	}
+
+	if !strings.Contains(prompt, "review=In Review") {
+		t.Fatalf("expected human_review lifecycle binding in prompt: %q", prompt)
+	}
+	if !strings.Contains(prompt, "done=Done") {
+		t.Fatalf("expected done lifecycle binding in prompt: %q", prompt)
+	}
+	if !strings.Contains(prompt, "kind=memory") {
+		t.Fatalf("expected tracker kind binding in prompt: %q", prompt)
+	}
+}
+
 func mustPromptConfig(t *testing.T, prompt string) *config.Config {
 	t.Helper()
 
@@ -96,7 +118,18 @@ func mustPromptConfig(t *testing.T, prompt string) *config.Config {
 		filepath.Join(t.TempDir(), "WORKFLOW.md"),
 		&workflow.Definition{
 			Config: map[string]any{
-				"tracker": map[string]any{"kind": "memory"},
+				"tracker": map[string]any{
+					"kind": "memory",
+					"lifecycle": map[string]any{
+						"backlog":      "Backlog",
+						"todo":         "Todo",
+						"in_progress":  "In Progress",
+						"human_review": "In Review",
+						"merging":      "Merging",
+						"rework":       "Rework",
+						"done":         "Done",
+					},
+				},
 			},
 			PromptTemplate: prompt,
 		},

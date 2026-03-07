@@ -54,6 +54,10 @@ func (s *trackerStub) UpdateIssueState(context.Context, string, string) error {
 	return nil
 }
 
+func (s *trackerStub) AddLink(context.Context, string, string, string) error {
+	return nil
+}
+
 type workspaceStub struct {
 	removedIdentifiers []string
 }
@@ -612,7 +616,7 @@ func TestSnapshotAndRefreshAvailableWhenRunning(t *testing.T) {
 
 	dir := t.TempDir()
 	workflowPath := filepath.Join(dir, "WORKFLOW.md")
-	workflowBody := "---\ntracker:\n  kind: memory\npolling:\n  interval_ms: 30000\n---\nprompt\n"
+	workflowBody := "---\ntracker:\n  kind: memory\n  lifecycle:\n    backlog: Backlog\n    todo: Todo\n    in_progress: In Progress\n    human_review: In Review\n    merging: Merging\n    rework: Rework\n    done: Done\npolling:\n  interval_ms: 30000\n---\nprompt\n"
 	if err := os.WriteFile(workflowPath, []byte(workflowBody), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
@@ -692,9 +696,20 @@ func testConfig(t *testing.T, extra map[string]any) *config.Config {
 
 	raw := map[string]any{
 		"tracker": map[string]any{
-			"kind":            "memory",
-			"active_states":   []string{"Todo", "In Progress", "In Review"},
-			"terminal_states": []string{"Closed", "Cancelled", "Canceled", "Duplicate", "Done"},
+			"kind": "memory",
+			"routing": map[string]any{
+				"active_states":   []string{"Todo", "In Progress", "In Review"},
+				"terminal_states": []string{"Closed", "Cancelled", "Canceled", "Duplicate", "Done"},
+			},
+			"lifecycle": map[string]any{
+				"backlog":      "Backlog",
+				"todo":         "Todo",
+				"in_progress":  "In Progress",
+				"human_review": "In Review",
+				"merging":      "Merging",
+				"rework":       "Rework",
+				"done":         "Done",
+			},
 		},
 		"polling": map[string]any{
 			"interval_ms": 30_000,
@@ -710,6 +725,21 @@ func testConfig(t *testing.T, extra map[string]any) *config.Config {
 	}
 
 	for key, value := range extra {
+		if key == "tracker" {
+			overrideTracker, ok := value.(map[string]any)
+			if ok {
+				baseTracker, _ := raw["tracker"].(map[string]any)
+				mergedTracker := map[string]any{}
+				for trackerKey, trackerValue := range baseTracker {
+					mergedTracker[trackerKey] = trackerValue
+				}
+				for trackerKey, trackerValue := range overrideTracker {
+					mergedTracker[trackerKey] = trackerValue
+				}
+				raw[key] = mergedTracker
+				continue
+			}
+		}
 		raw[key] = value
 	}
 

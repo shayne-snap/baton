@@ -12,17 +12,31 @@ import (
 	"time"
 
 	"baton/internal/config"
+	"baton/internal/tracker"
 )
 
 const LinearGraphQLTool = "linear_graphql"
+const TrackerGetIssueTool = "tracker_get_issue"
+const TrackerUpdateStateTool = "tracker_update_state"
+const TrackerUpsertWorkpadCommentTool = "tracker_upsert_workpad_comment"
+const TrackerAddLinkTool = "tracker_add_link"
 
 const linearGraphQLTool = LinearGraphQLTool
+const trackerGetIssueTool = TrackerGetIssueTool
+const trackerUpdateStateTool = TrackerUpdateStateTool
+const trackerUpsertWorkpadCommentTool = TrackerUpsertWorkpadCommentTool
+const trackerAddLinkTool = TrackerAddLinkTool
 
 var (
 	errMissingQuery          = errors.New("missing_query")
 	errInvalidArguments      = errors.New("invalid_arguments")
 	errInvalidVariables      = errors.New("invalid_variables")
 	errInvalidOperationCount = errors.New("invalid_operation_count")
+	errMissingIssueID        = errors.New("missing_issue_id")
+	errMissingState          = errors.New("missing_state")
+	errMissingBody           = errors.New("missing_body")
+	errMissingURL            = errors.New("missing_url")
+	errIssueNotFound         = errors.New("issue_not_found")
 )
 
 type linearStatusError struct {
@@ -44,21 +58,77 @@ func (e *linearRequestError) Error() string {
 func ToolSpecs() []map[string]any {
 	return []map[string]any{
 		{
-			"name":        linearGraphQLTool,
-			"description": "Execute a raw GraphQL query or mutation against Linear using Baton's configured auth.",
+			"name":        trackerGetIssueTool,
+			"description": "Fetch a tracker issue by `issue_id`.",
 			"inputSchema": map[string]any{
 				"type":                 "object",
 				"additionalProperties": false,
-				"required":             []any{"query"},
+				"required":             []any{"issue_id"},
 				"properties": map[string]any{
-					"query": map[string]any{
+					"issue_id": map[string]any{
 						"type":        "string",
-						"description": "GraphQL query or mutation document to execute against Linear.",
+						"description": "Tracker issue id.",
 					},
-					"variables": map[string]any{
-						"type":                 []any{"object", "null"},
-						"description":          "Optional GraphQL variables object.",
-						"additionalProperties": true,
+				},
+			},
+		},
+		{
+			"name":        trackerUpdateStateTool,
+			"description": "Update tracker issue state.",
+			"inputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []any{"issue_id", "state"},
+				"properties": map[string]any{
+					"issue_id": map[string]any{
+						"type":        "string",
+						"description": "Tracker issue id.",
+					},
+					"state": map[string]any{
+						"type":        "string",
+						"description": "Target tracker state name.",
+					},
+				},
+			},
+		},
+		{
+			"name":        trackerUpsertWorkpadCommentTool,
+			"description": "Upsert the tracker workpad comment for an issue.",
+			"inputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []any{"issue_id", "body"},
+				"properties": map[string]any{
+					"issue_id": map[string]any{
+						"type":        "string",
+						"description": "Tracker issue id.",
+					},
+					"body": map[string]any{
+						"type":        "string",
+						"description": "Comment body text.",
+					},
+				},
+			},
+		},
+		{
+			"name":        trackerAddLinkTool,
+			"description": "Add a link to the issue workpad comment.",
+			"inputSchema": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []any{"issue_id", "url"},
+				"properties": map[string]any{
+					"issue_id": map[string]any{
+						"type":        "string",
+						"description": "Tracker issue id.",
+					},
+					"url": map[string]any{
+						"type":        "string",
+						"description": "URL to attach to the issue.",
+					},
+					"title": map[string]any{
+						"type":        "string",
+						"description": "Optional link title.",
 					},
 				},
 			},
@@ -80,15 +150,30 @@ func NewDynamicToolExecutor(cfg *config.Config) *DynamicToolExecutor {
 
 func (e *DynamicToolExecutor) Execute(ctx context.Context, tool string, arguments any) map[string]any {
 	switch tool {
-	case linearGraphQLTool:
-		return e.executeLinearGraphQL(ctx, arguments)
+	case trackerGetIssueTool:
+		return e.executeTrackerGetIssue(ctx, arguments)
+	case trackerUpdateStateTool:
+		return e.executeTrackerUpdateState(ctx, arguments)
+	case trackerUpsertWorkpadCommentTool:
+		return e.executeTrackerUpsertWorkpadComment(ctx, arguments)
+	case trackerAddLinkTool:
+		return e.executeTrackerAddLink(ctx, arguments)
 	default:
 		return failureResponse(map[string]any{
 			"error": map[string]any{
 				"message":        fmt.Sprintf("Unsupported dynamic tool: %q.", tool),
-				"supportedTools": []any{linearGraphQLTool},
+				"supportedTools": supportedToolNames(),
 			},
 		})
+	}
+}
+
+func supportedToolNames() []any {
+	return []any{
+		trackerGetIssueTool,
+		trackerUpdateStateTool,
+		trackerUpsertWorkpadCommentTool,
+		trackerAddLinkTool,
 	}
 }
 
@@ -167,6 +252,125 @@ func (e *DynamicToolExecutor) executeLinearGraphQL(ctx context.Context, argument
 				"text": encodePayload(responseMap),
 			},
 		},
+	}
+}
+
+func (e *DynamicToolExecutor) executeTrackerGetIssue(ctx context.Context, arguments any) map[string]any {
+	issueID, _, _, err := parseTrackerCommonArguments(arguments)
+	if err != nil {
+		return failureResponse(trackerToolErrorPayload(err))
+	}
+	client := tracker.NewClient(e.config)
+	issues, err := client.FetchIssueStatesByIDs(ctx, []string{issueID})
+	if err != nil {
+		return failureResponse(trackerToolErrorPayload(err))
+	}
+	if len(issues) == 0 {
+		return failureResponse(trackerToolErrorPayload(errIssueNotFound))
+	}
+	return successResponse(map[string]any{"issue": issuePayload(issues[0])})
+}
+
+func (e *DynamicToolExecutor) executeTrackerUpdateState(ctx context.Context, arguments any) map[string]any {
+	issueID, state, _, err := parseTrackerCommonArguments(arguments)
+	if err != nil {
+		return failureResponse(trackerToolErrorPayload(err))
+	}
+	if strings.TrimSpace(state) == "" {
+		return failureResponse(trackerToolErrorPayload(errMissingState))
+	}
+	client := tracker.NewClient(e.config)
+	if err := client.UpdateIssueState(ctx, issueID, strings.TrimSpace(state)); err != nil {
+		return failureResponse(trackerToolErrorPayload(err))
+	}
+	return successResponse(map[string]any{
+		"issue_id": issueID,
+		"state":    strings.TrimSpace(state),
+		"updated":  true,
+	})
+}
+
+func (e *DynamicToolExecutor) executeTrackerUpsertWorkpadComment(ctx context.Context, arguments any) map[string]any {
+	issueID, _, body, err := parseTrackerCommonArguments(arguments)
+	if err != nil {
+		return failureResponse(trackerToolErrorPayload(err))
+	}
+	if strings.TrimSpace(body) == "" {
+		return failureResponse(trackerToolErrorPayload(errMissingBody))
+	}
+	client := tracker.NewClient(e.config)
+	if err := client.CreateComment(ctx, issueID, body); err != nil {
+		return failureResponse(trackerToolErrorPayload(err))
+	}
+	return successResponse(map[string]any{
+		"issue_id": issueID,
+		"updated":  true,
+	})
+}
+
+func (e *DynamicToolExecutor) executeTrackerAddLink(ctx context.Context, arguments any) map[string]any {
+	params, ok := arguments.(map[string]any)
+	if !ok || params == nil {
+		return failureResponse(trackerToolErrorPayload(errInvalidArguments))
+	}
+	issueID := strings.TrimSpace(stringFromMap(params, "issue_id"))
+	if issueID == "" {
+		return failureResponse(trackerToolErrorPayload(errMissingIssueID))
+	}
+	url := strings.TrimSpace(stringFromMap(params, "url"))
+	if url == "" {
+		return failureResponse(trackerToolErrorPayload(errMissingURL))
+	}
+	title := strings.TrimSpace(stringFromMap(params, "title"))
+	if title == "" {
+		title = url
+	}
+	client := tracker.NewClient(e.config)
+	if err := client.AddLink(ctx, issueID, url, title); err != nil {
+		return failureResponse(trackerToolErrorPayload(err))
+	}
+	return successResponse(map[string]any{
+		"issue_id": issueID,
+		"url":      url,
+		"title":    title,
+		"updated":  true,
+	})
+}
+
+func parseTrackerCommonArguments(arguments any) (string, string, string, error) {
+	params, ok := arguments.(map[string]any)
+	if !ok || params == nil {
+		return "", "", "", errInvalidArguments
+	}
+	issueID := strings.TrimSpace(stringFromMap(params, "issue_id"))
+	if issueID == "" {
+		return "", "", "", errMissingIssueID
+	}
+	return issueID, stringFromMap(params, "state"), stringFromMap(params, "body"), nil
+}
+
+func stringFromMap(values map[string]any, key string) string {
+	typed, _ := values[key].(string)
+	return typed
+}
+
+func issuePayload(issue tracker.Issue) map[string]any {
+	priority := any(nil)
+	if issue.Priority != nil {
+		priority = *issue.Priority
+	}
+	return map[string]any{
+		"id":                 issue.ID,
+		"identifier":         issue.Identifier,
+		"title":              issue.Title,
+		"description":        issue.Description,
+		"state":              issue.State,
+		"url":                issue.URL,
+		"branch_name":        issue.BranchName,
+		"assignee_id":        issue.AssigneeID,
+		"labels":             issue.LabelNames(),
+		"assigned_to_worker": issue.AssignedToWorker,
+		"priority":           priority,
 	}
 }
 
@@ -357,7 +561,7 @@ func toolErrorPayload(reason any) map[string]any {
 	case errors.Is(err, config.ErrMissingLinearAPIToken):
 		return map[string]any{
 			"error": map[string]any{
-				"message": "Baton is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
+				"message": "Baton is missing Linear auth. Set `tracker.linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
 			},
 		}
 	default:
@@ -385,6 +589,88 @@ func toolErrorPayload(reason any) map[string]any {
 				"reason":  fmt.Sprint(reason),
 			},
 		}
+	}
+}
+
+func trackerToolErrorPayload(reason any) map[string]any {
+	err, _ := reason.(error)
+	switch {
+	case errors.Is(err, errInvalidArguments):
+		return map[string]any{
+			"error": map[string]any{
+				"code":    "invalid_arguments",
+				"message": "Tracker tools require a JSON object argument.",
+			},
+		}
+	case errors.Is(err, errMissingIssueID):
+		return map[string]any{
+			"error": map[string]any{
+				"code":    "invalid_arguments",
+				"message": "`issue_id` is required.",
+			},
+		}
+	case errors.Is(err, errMissingState):
+		return map[string]any{
+			"error": map[string]any{
+				"code":    "invalid_arguments",
+				"message": "`state` is required.",
+			},
+		}
+	case errors.Is(err, errMissingBody):
+		return map[string]any{
+			"error": map[string]any{
+				"code":    "invalid_arguments",
+				"message": "`body` is required.",
+			},
+		}
+	case errors.Is(err, errMissingURL):
+		return map[string]any{
+			"error": map[string]any{
+				"code":    "invalid_arguments",
+				"message": "`url` is required.",
+			},
+		}
+	case errors.Is(err, errIssueNotFound):
+		return map[string]any{
+			"error": map[string]any{
+				"code":    "not_found",
+				"message": "Issue not found.",
+			},
+		}
+	case errors.Is(err, tracker.ErrStateNotFound):
+		return map[string]any{
+			"error": map[string]any{
+				"code":    "not_found",
+				"message": "Target state not found for this issue.",
+			},
+		}
+	case errors.Is(err, tracker.ErrMissingLinearAPIToken):
+		return map[string]any{
+			"error": map[string]any{
+				"code":    "permission",
+				"message": "Missing tracker credentials for Linear.",
+			},
+		}
+	default:
+		return map[string]any{
+			"error": map[string]any{
+				"code":    "execution_error",
+				"message": "Tracker tool execution failed.",
+				"reason":  fmt.Sprint(reason),
+			},
+		}
+	}
+}
+
+func successResponse(payload map[string]any) map[string]any {
+	return map[string]any{
+		"success": true,
+		"contentItems": []any{
+			map[string]any{
+				"type": "inputText",
+				"text": encodePayload(payload),
+			},
+		},
 	}
 }
 

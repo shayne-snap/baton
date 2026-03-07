@@ -14,16 +14,27 @@ import (
 )
 
 var (
-	ErrMissingTrackerKind        = errors.New("missing_tracker_kind")
-	ErrMissingLinearAPIToken     = errors.New("missing_linear_api_token")
-	ErrMissingLinearProjectSlug  = errors.New("missing_linear_project_slug")
-	ErrUnsupportedAgentRuntime   = errors.New("unsupported_agent_runtime")
-	ErrMissingCodexCommand       = errors.New("missing_codex_command")
-	ErrMissingOpencodeCommand    = errors.New("missing_opencode_command")
-	ErrInvalidCodexApproval      = errors.New("invalid_codex_approval_policy")
-	ErrInvalidCodexThreadSandbox = errors.New("invalid_codex_thread_sandbox")
-	ErrInvalidCodexTurnSandbox   = errors.New("invalid_codex_turn_sandbox_policy")
-	ErrUnsupportedTrackerKind    = errors.New("unsupported_tracker_kind")
+	ErrMissingTrackerKind           = errors.New("missing_tracker_kind")
+	ErrMissingTrackerLifecycleState = errors.New("missing_tracker_lifecycle_state")
+	ErrMissingLinearAPIToken        = errors.New("missing_linear_api_token")
+	ErrMissingLinearProjectSlug     = errors.New("missing_linear_project_slug")
+	ErrMissingJiraBaseURL           = errors.New("missing_jira_base_url")
+	ErrMissingJiraProjectKey        = errors.New("missing_jira_project_key")
+	ErrMissingJiraAuthType          = errors.New("missing_jira_auth_type")
+	ErrMissingJiraEmail             = errors.New("missing_jira_email")
+	ErrMissingJiraAPIToken          = errors.New("missing_jira_api_token")
+	ErrMissingFeishuBaseURL         = errors.New("missing_feishu_base_url")
+	ErrMissingFeishuProjectKey      = errors.New("missing_feishu_project_key")
+	ErrMissingFeishuAppID           = errors.New("missing_feishu_app_id")
+	ErrMissingFeishuAppSecret       = errors.New("missing_feishu_app_secret")
+	ErrUnsupportedAgentRuntime      = errors.New("unsupported_agent_runtime")
+	ErrMissingCodexCommand          = errors.New("missing_codex_command")
+	ErrMissingOpencodeCommand       = errors.New("missing_opencode_command")
+	ErrInvalidClaudeCodePermission  = errors.New("invalid_claudecode_permission_mode")
+	ErrInvalidCodexApproval         = errors.New("invalid_codex_approval_policy")
+	ErrInvalidCodexThreadSandbox    = errors.New("invalid_codex_thread_sandbox")
+	ErrInvalidCodexTurnSandbox      = errors.New("invalid_codex_turn_sandbox_policy")
+	ErrUnsupportedTrackerKind       = errors.New("unsupported_tracker_kind")
 )
 
 const (
@@ -35,6 +46,7 @@ const (
 	defaultMaxRetryBackoffMS  = 300_000
 	defaultCodexCommand       = "codex app-server"
 	defaultOpencodeCommand    = "opencode serve"
+	defaultClaudeCodeCommand  = "claude"
 	defaultCodexTurnTimeoutMS = 3_600_000
 	defaultCodexReadTimeoutMS = 5_000
 	defaultCodexStallTimeout  = 300_000
@@ -42,6 +54,7 @@ const (
 	defaultDashboardRefreshMS = 1_000
 	defaultDashboardRenderMS  = 16
 	defaultServerHost         = "127.0.0.1"
+	defaultClaudePermission   = "dontAsk"
 )
 
 var (
@@ -110,13 +123,54 @@ type Config struct {
 }
 
 type TrackerConfig struct {
-	Kind        string
+	Kind      string
+	Routing   TrackerRoutingConfig
+	Lifecycle TrackerLifecycleConfig
+	Linear    TrackerLinearConfig
+	Jira      TrackerJiraConfig
+	Feishu    TrackerFeishuConfig
+}
+
+type TrackerRoutingConfig struct {
+	Assignee string
+	Active   []string
+	Terminal []string
+}
+
+type TrackerLifecycleConfig struct {
+	Backlog     string
+	Todo        string
+	InProgress  string
+	HumanReview string
+	Merging     string
+	Rework      string
+	Done        string
+}
+
+type TrackerLinearConfig struct {
 	Endpoint    string
 	APIKey      string
 	ProjectSlug string
-	Assignee    string
-	Active      []string
-	Terminal    []string
+}
+
+type TrackerJiraConfig struct {
+	BaseURL    string
+	ProjectKey string
+	JQL        string
+	Auth       TrackerJiraAuthConfig
+}
+
+type TrackerJiraAuthConfig struct {
+	Type     string
+	Email    string
+	APIToken string
+}
+
+type TrackerFeishuConfig struct {
+	BaseURL    string
+	ProjectKey string
+	AppID      string
+	AppSecret  string
 }
 
 type PollingConfig struct {
@@ -131,9 +185,10 @@ type AgentConfig struct {
 }
 
 type AgentRuntimeConfig struct {
-	Kind     string
-	Codex    CodexConfig
-	Opencode OpencodeConfig
+	Kind       string
+	Codex      CodexConfig
+	Opencode   OpencodeConfig
+	ClaudeCode ClaudeCodeConfig
 }
 
 type CodexConfig struct {
@@ -149,6 +204,17 @@ type CodexConfig struct {
 type OpencodeConfig struct {
 	Command    string
 	Permission []map[string]any
+}
+
+type ClaudeCodeConfig struct {
+	Command            string
+	PermissionMode     string
+	AllowedTools       []string
+	DisallowedTools    []string
+	Model              string
+	AppendSystemPrompt string
+	MCPStrict          bool
+	SessionPersistence bool
 }
 
 type HooksConfig struct {
@@ -186,19 +252,49 @@ func FromWorkflow(path string, definition *workflow.Definition) (*Config, error)
 	agentRuntimeRaw, _ := getPath(raw, "agent_runtime").(map[string]any)
 	codexRaw := codexConfigSource(raw)
 	opencodeRaw, _ := getPath(agentRuntimeRaw, "opencode").(map[string]any)
+	claudeCodeRaw, _ := getPath(agentRuntimeRaw, "claudecode").(map[string]any)
 
 	cfg := &Config{
 		WorkflowPath:   cleanPath,
 		RawConfig:      raw,
 		promptTemplate: strings.TrimSpace(definition.PromptTemplate),
 		Tracker: TrackerConfig{
-			Kind:        normalizeTrackerKind(scalarString(getPath(raw, "tracker", "kind"))),
-			Endpoint:    withDefault(scalarString(getPath(raw, "tracker", "endpoint")), defaultLinearEndpoint),
-			APIKey:      binaryValue(getPath(raw, "tracker", "api_key")),
-			ProjectSlug: scalarString(getPath(raw, "tracker", "project_slug")),
-			Assignee:    scalarString(getPath(raw, "tracker", "assignee")),
-			Active:      parseCSV(getPath(raw, "tracker", "active_states"), defaultActiveStates),
-			Terminal:    parseCSV(getPath(raw, "tracker", "terminal_states"), defaultTerminalStates),
+			Kind: normalizeTrackerKind(scalarString(getPath(raw, "tracker", "kind"))),
+			Routing: TrackerRoutingConfig{
+				Assignee: scalarString(getPath(raw, "tracker", "routing", "assignee")),
+				Active:   parseCSV(getPath(raw, "tracker", "routing", "active_states"), defaultActiveStates),
+				Terminal: parseCSV(getPath(raw, "tracker", "routing", "terminal_states"), defaultTerminalStates),
+			},
+			Lifecycle: TrackerLifecycleConfig{
+				Backlog:     scalarString(getPath(raw, "tracker", "lifecycle", "backlog")),
+				Todo:        scalarString(getPath(raw, "tracker", "lifecycle", "todo")),
+				InProgress:  scalarString(getPath(raw, "tracker", "lifecycle", "in_progress")),
+				HumanReview: scalarString(getPath(raw, "tracker", "lifecycle", "human_review")),
+				Merging:     scalarString(getPath(raw, "tracker", "lifecycle", "merging")),
+				Rework:      scalarString(getPath(raw, "tracker", "lifecycle", "rework")),
+				Done:        scalarString(getPath(raw, "tracker", "lifecycle", "done")),
+			},
+			Linear: TrackerLinearConfig{
+				Endpoint:    withDefault(scalarString(getPath(raw, "tracker", "linear", "endpoint")), defaultLinearEndpoint),
+				APIKey:      binaryValue(getPath(raw, "tracker", "linear", "api_key")),
+				ProjectSlug: scalarString(getPath(raw, "tracker", "linear", "project_slug")),
+			},
+			Jira: TrackerJiraConfig{
+				BaseURL:    scalarString(getPath(raw, "tracker", "jira", "base_url")),
+				ProjectKey: scalarString(getPath(raw, "tracker", "jira", "project_key")),
+				JQL:        scalarString(getPath(raw, "tracker", "jira", "jql")),
+				Auth: TrackerJiraAuthConfig{
+					Type:     scalarString(getPath(raw, "tracker", "jira", "auth", "type")),
+					Email:    binaryValue(getPath(raw, "tracker", "jira", "auth", "email")),
+					APIToken: binaryValue(getPath(raw, "tracker", "jira", "auth", "api_token")),
+				},
+			},
+			Feishu: TrackerFeishuConfig{
+				BaseURL:    scalarString(getPath(raw, "tracker", "feishu", "base_url")),
+				ProjectKey: scalarString(getPath(raw, "tracker", "feishu", "project_key")),
+				AppID:      binaryValue(getPath(raw, "tracker", "feishu", "app_id")),
+				AppSecret:  binaryValue(getPath(raw, "tracker", "feishu", "app_secret")),
+			},
 		},
 		Polling: PollingConfig{
 			IntervalMS: intWithDefault(getPath(raw, "polling", "interval_ms"), defaultPollIntervalMS),
@@ -223,6 +319,16 @@ func FromWorkflow(path string, definition *workflow.Definition) (*Config, error)
 			Opencode: OpencodeConfig{
 				Command:    commandWithDefault(getPath(opencodeRaw, "command"), defaultOpencodeCommand),
 				Permission: parseMapList(getPath(opencodeRaw, "permission")),
+			},
+			ClaudeCode: ClaudeCodeConfig{
+				Command:            commandWithDefault(getPath(claudeCodeRaw, "command"), defaultClaudeCodeCommand),
+				PermissionMode:     withDefault(scalarString(getPath(claudeCodeRaw, "permission_mode")), defaultClaudePermission),
+				AllowedTools:       parseCSV(getPath(claudeCodeRaw, "allowed_tools"), nil),
+				DisallowedTools:    parseCSV(getPath(claudeCodeRaw, "disallowed_tools"), nil),
+				Model:              scalarString(getPath(claudeCodeRaw, "model")),
+				AppendSystemPrompt: scalarString(getPath(claudeCodeRaw, "append_system_prompt")),
+				MCPStrict:          boolWithDefault(getPath(claudeCodeRaw, "mcp_strict"), true),
+				SessionPersistence: boolWithDefault(getPath(claudeCodeRaw, "session_persistence"), true),
 			},
 		},
 		Hooks: HooksConfig{
@@ -253,22 +359,82 @@ func (c *Config) Validate() error {
 	switch kind := c.Tracker.Kind; kind {
 	case "":
 		return &ValidationError{Code: ErrMissingTrackerKind}
-	case "linear", "memory":
+	case "linear", "jira", "feishu", "memory":
 	default:
 		return &ValidationError{Code: ErrUnsupportedTrackerKind, Value: kind}
 	}
 
+	lifecycle := c.Tracker.Lifecycle
+	if strings.TrimSpace(lifecycle.Backlog) == "" {
+		return &ValidationError{Code: ErrMissingTrackerLifecycleState, Value: "backlog"}
+	}
+	if strings.TrimSpace(lifecycle.Todo) == "" {
+		return &ValidationError{Code: ErrMissingTrackerLifecycleState, Value: "todo"}
+	}
+	if strings.TrimSpace(lifecycle.InProgress) == "" {
+		return &ValidationError{Code: ErrMissingTrackerLifecycleState, Value: "in_progress"}
+	}
+	if strings.TrimSpace(lifecycle.HumanReview) == "" {
+		return &ValidationError{Code: ErrMissingTrackerLifecycleState, Value: "human_review"}
+	}
+	if strings.TrimSpace(lifecycle.Merging) == "" {
+		return &ValidationError{Code: ErrMissingTrackerLifecycleState, Value: "merging"}
+	}
+	if strings.TrimSpace(lifecycle.Rework) == "" {
+		return &ValidationError{Code: ErrMissingTrackerLifecycleState, Value: "rework"}
+	}
+	if strings.TrimSpace(lifecycle.Done) == "" {
+		return &ValidationError{Code: ErrMissingTrackerLifecycleState, Value: "done"}
+	}
+
 	if c.Tracker.Kind == "linear" {
-		token := normalizeSecret(resolveEnvValue(c.Tracker.APIKey, os.Getenv("LINEAR_API_KEY")))
+		token := normalizeSecret(resolveEnvValue(c.Tracker.Linear.APIKey, os.Getenv("LINEAR_API_KEY")))
 		if token == "" {
 			return &ValidationError{Code: ErrMissingLinearAPIToken}
 		}
-		if strings.TrimSpace(c.Tracker.ProjectSlug) == "" {
+		if strings.TrimSpace(c.Tracker.Linear.ProjectSlug) == "" {
 			return &ValidationError{Code: ErrMissingLinearProjectSlug}
 		}
 	}
+	if c.Tracker.Kind == "jira" {
+		if strings.TrimSpace(c.Tracker.Jira.BaseURL) == "" {
+			return &ValidationError{Code: ErrMissingJiraBaseURL}
+		}
+		if strings.TrimSpace(c.Tracker.Jira.ProjectKey) == "" {
+			return &ValidationError{Code: ErrMissingJiraProjectKey}
+		}
+		if strings.TrimSpace(c.Tracker.Jira.Auth.Type) == "" {
+			return &ValidationError{Code: ErrMissingJiraAuthType}
+		}
+		email := normalizeSecret(resolveEnvValue(c.Tracker.Jira.Auth.Email, os.Getenv("JIRA_EMAIL")))
+		if email == "" {
+			return &ValidationError{Code: ErrMissingJiraEmail}
+		}
+		token := normalizeSecret(resolveEnvValue(c.Tracker.Jira.Auth.APIToken, os.Getenv("JIRA_API_TOKEN")))
+		if token == "" {
+			return &ValidationError{Code: ErrMissingJiraAPIToken}
+		}
+	}
+	if c.Tracker.Kind == "feishu" {
+		baseURL := strings.TrimSpace(resolveEnvValue(c.Tracker.Feishu.BaseURL, os.Getenv("FEISHU_BASE_URL")))
+		if baseURL == "" {
+			return &ValidationError{Code: ErrMissingFeishuBaseURL}
+		}
+		projectKey := strings.TrimSpace(resolveEnvValue(c.Tracker.Feishu.ProjectKey, os.Getenv("FEISHU_PROJECT_KEY")))
+		if projectKey == "" {
+			return &ValidationError{Code: ErrMissingFeishuProjectKey}
+		}
+		appID := normalizeSecret(resolveEnvValue(c.Tracker.Feishu.AppID, os.Getenv("FEISHU_APP_ID")))
+		if appID == "" {
+			return &ValidationError{Code: ErrMissingFeishuAppID}
+		}
+		appSecret := normalizeSecret(resolveEnvValue(c.Tracker.Feishu.AppSecret, os.Getenv("FEISHU_APP_SECRET")))
+		if appSecret == "" {
+			return &ValidationError{Code: ErrMissingFeishuAppSecret}
+		}
+	}
 
-	if kind := c.AgentRuntime.Kind; kind != "" && kind != "codex" && kind != "opencode" {
+	if kind := c.AgentRuntime.Kind; kind != "" && kind != "codex" && kind != "opencode" && kind != "claudecode" {
 		return &ValidationError{Code: ErrUnsupportedAgentRuntime, Value: kind}
 	}
 
@@ -283,6 +449,10 @@ func (c *Config) Validate() error {
 	case "opencode":
 		if strings.TrimSpace(c.AgentRuntime.Opencode.Command) == "" {
 			return &ValidationError{Code: ErrMissingOpencodeCommand}
+		}
+	case "claudecode":
+		if !validClaudePermissionMode(c.AgentRuntime.ClaudeCode.PermissionMode) {
+			return &ValidationError{Code: ErrInvalidClaudeCodePermission, Value: c.AgentRuntime.ClaudeCode.PermissionMode}
 		}
 	}
 
@@ -325,25 +495,39 @@ func (c *Config) TrackerKind() string {
 func (c *Config) LinearEndpoint() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.Tracker.Endpoint
+	return c.Tracker.Linear.Endpoint
 }
 
 func (c *Config) LinearProjectSlug() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return strings.TrimSpace(c.Tracker.ProjectSlug)
+	return strings.TrimSpace(c.Tracker.Linear.ProjectSlug)
 }
 
 func (c *Config) LinearActiveStates() []string {
+	return c.TrackerActiveStates()
+}
+
+func (c *Config) TrackerActiveStates() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return cloneStrings(c.Tracker.Active)
+	return cloneStrings(c.Tracker.Routing.Active)
 }
 
 func (c *Config) LinearTerminalStates() []string {
+	return c.TrackerTerminalStates()
+}
+
+func (c *Config) TrackerTerminalStates() []string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return cloneStrings(c.Tracker.Terminal)
+	return cloneStrings(c.Tracker.Routing.Terminal)
+}
+
+func (c *Config) TrackerLifecycle() TrackerLifecycleConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Tracker.Lifecycle
 }
 
 func (c *Config) PollIntervalMS() int {
@@ -398,6 +582,54 @@ func (c *Config) OpencodePermissionRules() []map[string]any {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return cloneMapList(c.AgentRuntime.Opencode.Permission)
+}
+
+func (c *Config) ClaudeCodeCommand() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.AgentRuntime.ClaudeCode.Command
+}
+
+func (c *Config) ClaudeCodePermissionMode() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.AgentRuntime.ClaudeCode.PermissionMode
+}
+
+func (c *Config) ClaudeCodeAllowedTools() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return cloneStrings(c.AgentRuntime.ClaudeCode.AllowedTools)
+}
+
+func (c *Config) ClaudeCodeDisallowedTools() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return cloneStrings(c.AgentRuntime.ClaudeCode.DisallowedTools)
+}
+
+func (c *Config) ClaudeCodeModel() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.AgentRuntime.ClaudeCode.Model
+}
+
+func (c *Config) ClaudeCodeAppendSystemPrompt() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.AgentRuntime.ClaudeCode.AppendSystemPrompt
+}
+
+func (c *Config) ClaudeCodeMCPStrict() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.AgentRuntime.ClaudeCode.MCPStrict
+}
+
+func (c *Config) ClaudeCodeSessionPersistence() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.AgentRuntime.ClaudeCode.SessionPersistence
 }
 
 func (c *Config) HookTimeoutMS() int {
@@ -500,14 +732,93 @@ func (c *Config) MaxConcurrentAgentsForState(stateName string) int {
 func (c *Config) LinearAPIToken() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	value := resolveEnvValue(c.Tracker.APIKey, os.Getenv("LINEAR_API_KEY"))
+	value := resolveEnvValue(c.Tracker.Linear.APIKey, os.Getenv("LINEAR_API_KEY"))
 	return normalizeSecret(value)
 }
 
 func (c *Config) LinearAssignee() string {
+	return c.TrackerAssignee()
+}
+
+func (c *Config) TrackerAssignee() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	value := resolveEnvValue(c.Tracker.Assignee, os.Getenv("LINEAR_ASSIGNEE"))
+	if rawAssignee := getPath(c.RawConfig, "tracker", "routing", "assignee"); rawAssignee != nil {
+		explicit := strings.TrimSpace(scalarString(rawAssignee))
+		if explicit == "" {
+			return ""
+		}
+	}
+	value := resolveEnvValue(c.Tracker.Routing.Assignee, os.Getenv("BATON_ASSIGNEE"))
+	if strings.TrimSpace(value) == "" {
+		value = resolveEnvValue(c.Tracker.Routing.Assignee, os.Getenv("LINEAR_ASSIGNEE"))
+	}
+	return normalizeSecret(value)
+}
+
+func (c *Config) JiraBaseURL() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return strings.TrimSpace(c.Tracker.Jira.BaseURL)
+}
+
+func (c *Config) JiraProjectKey() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return strings.TrimSpace(c.Tracker.Jira.ProjectKey)
+}
+
+func (c *Config) JiraJQL() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return strings.TrimSpace(c.Tracker.Jira.JQL)
+}
+
+func (c *Config) JiraAuthType() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return strings.TrimSpace(c.Tracker.Jira.Auth.Type)
+}
+
+func (c *Config) JiraEmail() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	value := resolveEnvValue(c.Tracker.Jira.Auth.Email, os.Getenv("JIRA_EMAIL"))
+	return normalizeSecret(value)
+}
+
+func (c *Config) JiraAPIToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	value := resolveEnvValue(c.Tracker.Jira.Auth.APIToken, os.Getenv("JIRA_API_TOKEN"))
+	return normalizeSecret(value)
+}
+
+func (c *Config) FeishuBaseURL() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	value := resolveEnvValue(c.Tracker.Feishu.BaseURL, os.Getenv("FEISHU_BASE_URL"))
+	return strings.TrimSpace(value)
+}
+
+func (c *Config) FeishuProjectKey() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	value := resolveEnvValue(c.Tracker.Feishu.ProjectKey, os.Getenv("FEISHU_PROJECT_KEY"))
+	return strings.TrimSpace(value)
+}
+
+func (c *Config) FeishuAppID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	value := resolveEnvValue(c.Tracker.Feishu.AppID, os.Getenv("FEISHU_APP_ID"))
+	return normalizeSecret(value)
+}
+
+func (c *Config) FeishuAppSecret() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	value := resolveEnvValue(c.Tracker.Feishu.AppSecret, os.Getenv("FEISHU_APP_SECRET"))
 	return normalizeSecret(value)
 }
 
@@ -675,6 +986,15 @@ func normalizeAgentRuntimeKind(value string) string {
 		return "codex"
 	}
 	return trimmed
+}
+
+func validClaudePermissionMode(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "acceptEdits", "bypassPermissions", "default", "delegate", "dontAsk", "plan":
+		return true
+	default:
+		return false
+	}
 }
 
 func codexConfigSource(raw map[string]any) map[string]any {

@@ -10,10 +10,10 @@ import (
 	"testing"
 )
 
-func TestHandleRequestToolsListUsesLinearGraphQLShape(t *testing.T) {
+func TestHandleRequestToolsListIncludesTrackerTools(t *testing.T) {
 	t.Parallel()
 
-	server := &linearServer{}
+	server := &trackerServer{}
 	result, rpcErr := server.handleRequest(context.Background(), jsonRPCRequest{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage("1"),
@@ -28,11 +28,17 @@ func TestHandleRequestToolsListUsesLinearGraphQLShape(t *testing.T) {
 		t.Fatalf("unexpected result type: %T", result)
 	}
 	tools, _ := payload["tools"].([]map[string]any)
-	if len(tools) != 1 {
+	if len(tools) < 2 {
 		t.Fatalf("unexpected tools payload: %#v", payload)
 	}
-	if got := tools[0]["name"]; got != linearMCPToolName {
-		t.Fatalf("unexpected tool name: %#v", got)
+	var foundTrackerGetIssue bool
+	for _, tool := range tools {
+		if tool["name"] == "tracker_get_issue" {
+			foundTrackerGetIssue = true
+		}
+	}
+	if !foundTrackerGetIssue {
+		t.Fatalf("missing expected tracker tool; tracker_get_issue=%v payload=%#v", foundTrackerGetIssue, payload)
 	}
 }
 
@@ -59,7 +65,7 @@ func TestServeWritesMCPFramedResponse(t *testing.T) {
 
 	request := `{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}`
 	writer := &testWriter{}
-	server := &linearServer{
+	server := &trackerServer{
 		in:  bufioReader(frameMessage(request)),
 		out: bufio.NewWriter(writer),
 	}
@@ -81,7 +87,7 @@ func TestServeSupportsJSONLineFraming(t *testing.T) {
 
 	request := "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"params\":{}}\n"
 	writer := &testWriter{}
-	server := &linearServer{
+	server := &trackerServer{
 		in:  bufioReader(request),
 		out: bufio.NewWriter(writer),
 	}
@@ -104,7 +110,7 @@ func TestServeSupportsJSONLineFraming(t *testing.T) {
 func TestInitializeEchoesClientProtocolVersion(t *testing.T) {
 	t.Parallel()
 
-	server := &linearServer{}
+	server := &trackerServer{}
 	result, rpcErr := server.handleRequest(context.Background(), jsonRPCRequest{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage("1"),
@@ -120,6 +126,10 @@ func TestInitializeEchoesClientProtocolVersion(t *testing.T) {
 	}
 	if got := payload["protocolVersion"]; got != "2025-11-25" {
 		t.Fatalf("unexpected protocol version: %#v", got)
+	}
+	serverInfo, _ := payload["serverInfo"].(map[string]any)
+	if got := serverInfo["name"]; got != "baton-tracker" {
+		t.Fatalf("unexpected server name: %#v", got)
 	}
 }
 

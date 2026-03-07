@@ -92,6 +92,10 @@ func (c *memoryClient) UpdateIssueState(_ context.Context, _ string, _ string) e
 	return nil
 }
 
+func (c *memoryClient) AddLink(_ context.Context, _ string, _ string, _ string) error {
+	return nil
+}
+
 func configuredMemoryIssues() []Issue {
 	if fromEnv, ok := memoryIssuesFromEnv(); ok {
 		return fromEnv

@@ -250,11 +250,11 @@ func (r *Runtime) opencodePermissionRules() []map[string]any {
 }
 
 func prepareOpencodeConfigDir(cfg *config.Config) (string, []string, error) {
-	if cfg == nil || strings.TrimSpace(cfg.Tracker.Kind) != "linear" {
+	if cfg == nil {
 		return "", nil, nil
 	}
-	apiKey := strings.TrimSpace(cfg.LinearAPIToken())
-	if apiKey == "" {
+	trackerKind := strings.ToLower(strings.TrimSpace(cfg.Tracker.Kind))
+	if trackerKind != "linear" && trackerKind != "jira" && trackerKind != "feishu" {
 		return "", nil, nil
 	}
 
@@ -273,17 +273,102 @@ func prepareOpencodeConfigDir(cfg *config.Config) (string, []string, error) {
 	}
 	configPayload := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
-		"mcp": map[string]any{
-			"linear": map[string]any{
+	}
+	var extraEnv []string
+	switch trackerKind {
+	case "linear":
+		apiKey := strings.TrimSpace(cfg.LinearAPIToken())
+		if apiKey == "" {
+			return "", nil, nil
+		}
+		configPayload["mcp"] = map[string]any{
+			"tracker": map[string]any{
 				"type":    "local",
-				"command": []string{filepath.Clean(executable), "mcp-linear-server"},
+				"command": []string{filepath.Clean(executable), "mcp-tracker-server"},
 				"enabled": true,
 				"environment": map[string]any{
-					"BATON_LINEAR_API_KEY":  "{env:BATON_LINEAR_API_KEY}",
-					"BATON_LINEAR_ENDPOINT": "{env:BATON_LINEAR_ENDPOINT}",
+					"BATON_TRACKER_KIND":     "{env:BATON_TRACKER_KIND}",
+					"BATON_TRACKER_ASSIGNEE": "{env:BATON_TRACKER_ASSIGNEE}",
+					"BATON_LINEAR_API_KEY":   "{env:BATON_LINEAR_API_KEY}",
+					"BATON_LINEAR_ENDPOINT":  "{env:BATON_LINEAR_ENDPOINT}",
 				},
 			},
-		},
+		}
+		extraEnv = []string{
+			"OPENCODE_CONFIG_DIR=" + configDir,
+			"BATON_TRACKER_KIND=linear",
+			"BATON_TRACKER_ASSIGNEE=" + strings.TrimSpace(cfg.TrackerAssignee()),
+			"BATON_LINEAR_API_KEY=" + apiKey,
+			"BATON_LINEAR_ENDPOINT=" + linearEndpointOrDefault(strings.TrimSpace(cfg.LinearEndpoint())),
+		}
+	case "jira":
+		baseURL := strings.TrimSpace(cfg.JiraBaseURL())
+		projectKey := strings.TrimSpace(cfg.JiraProjectKey())
+		email := strings.TrimSpace(cfg.JiraEmail())
+		apiToken := strings.TrimSpace(cfg.JiraAPIToken())
+		if baseURL == "" || projectKey == "" || email == "" || apiToken == "" {
+			return "", nil, nil
+		}
+		configPayload["mcp"] = map[string]any{
+			"tracker": map[string]any{
+				"type":    "local",
+				"command": []string{filepath.Clean(executable), "mcp-tracker-server"},
+				"enabled": true,
+				"environment": map[string]any{
+					"BATON_TRACKER_KIND":     "{env:BATON_TRACKER_KIND}",
+					"BATON_TRACKER_ASSIGNEE": "{env:BATON_TRACKER_ASSIGNEE}",
+					"BATON_JIRA_BASE_URL":    "{env:BATON_JIRA_BASE_URL}",
+					"BATON_JIRA_PROJECT_KEY": "{env:BATON_JIRA_PROJECT_KEY}",
+					"BATON_JIRA_JQL":         "{env:BATON_JIRA_JQL}",
+					"BATON_JIRA_AUTH_TYPE":   "{env:BATON_JIRA_AUTH_TYPE}",
+					"BATON_JIRA_EMAIL":       "{env:BATON_JIRA_EMAIL}",
+					"BATON_JIRA_API_TOKEN":   "{env:BATON_JIRA_API_TOKEN}",
+				},
+			},
+		}
+		extraEnv = []string{
+			"OPENCODE_CONFIG_DIR=" + configDir,
+			"BATON_TRACKER_KIND=jira",
+			"BATON_TRACKER_ASSIGNEE=" + strings.TrimSpace(cfg.TrackerAssignee()),
+			"BATON_JIRA_BASE_URL=" + baseURL,
+			"BATON_JIRA_PROJECT_KEY=" + projectKey,
+			"BATON_JIRA_JQL=" + strings.TrimSpace(cfg.JiraJQL()),
+			"BATON_JIRA_AUTH_TYPE=" + strings.TrimSpace(cfg.JiraAuthType()),
+			"BATON_JIRA_EMAIL=" + email,
+			"BATON_JIRA_API_TOKEN=" + apiToken,
+		}
+	case "feishu":
+		baseURL := strings.TrimSpace(cfg.FeishuBaseURL())
+		projectKey := strings.TrimSpace(cfg.FeishuProjectKey())
+		appID := strings.TrimSpace(cfg.FeishuAppID())
+		appSecret := strings.TrimSpace(cfg.FeishuAppSecret())
+		if baseURL == "" || projectKey == "" || appID == "" || appSecret == "" {
+			return "", nil, nil
+		}
+		configPayload["mcp"] = map[string]any{
+			"tracker": map[string]any{
+				"type":    "local",
+				"command": []string{filepath.Clean(executable), "mcp-tracker-server"},
+				"enabled": true,
+				"environment": map[string]any{
+					"BATON_TRACKER_KIND":       "{env:BATON_TRACKER_KIND}",
+					"BATON_TRACKER_ASSIGNEE":   "{env:BATON_TRACKER_ASSIGNEE}",
+					"BATON_FEISHU_BASE_URL":    "{env:BATON_FEISHU_BASE_URL}",
+					"BATON_FEISHU_PROJECT_KEY": "{env:BATON_FEISHU_PROJECT_KEY}",
+					"BATON_FEISHU_APP_ID":      "{env:BATON_FEISHU_APP_ID}",
+					"BATON_FEISHU_APP_SECRET":  "{env:BATON_FEISHU_APP_SECRET}",
+				},
+			},
+		}
+		extraEnv = []string{
+			"OPENCODE_CONFIG_DIR=" + configDir,
+			"BATON_TRACKER_KIND=feishu",
+			"BATON_TRACKER_ASSIGNEE=" + strings.TrimSpace(cfg.TrackerAssignee()),
+			"BATON_FEISHU_BASE_URL=" + baseURL,
+			"BATON_FEISHU_PROJECT_KEY=" + projectKey,
+			"BATON_FEISHU_APP_ID=" + appID,
+			"BATON_FEISHU_APP_SECRET=" + appSecret,
+		}
 	}
 	rawConfig, err := json.MarshalIndent(configPayload, "", "  ")
 	if err != nil {
@@ -293,11 +378,7 @@ func prepareOpencodeConfigDir(cfg *config.Config) (string, []string, error) {
 		return cleanup(err)
 	}
 
-	return configDir, []string{
-		"OPENCODE_CONFIG_DIR=" + configDir,
-		"BATON_LINEAR_API_KEY=" + apiKey,
-		"BATON_LINEAR_ENDPOINT=" + linearEndpointOrDefault(strings.TrimSpace(cfg.LinearEndpoint())),
-	}, nil
+	return configDir, extraEnv, nil
 }
 
 func linearEndpointOrDefault(endpoint string) string {
@@ -550,11 +631,15 @@ func (s *session) handleEvent(
 		if !sameSession(properties, s.sessionID) {
 			return false, nil, nil
 		}
+		message := strings.TrimSpace(sessionErrorMessage(properties))
 		emitUpdate(handler, s.processPID, "notification", map[string]any{
 			"method": "session.error",
 			"params": properties,
 		})
-		return false, nil, fmt.Errorf("opencode session error: %s", sessionErrorMessage(properties))
+		if isIgnorableSessionErrorMessage(message) {
+			return false, nil, nil
+		}
+		return false, nil, fmt.Errorf("opencode session error: %s", message)
 	case "session.status":
 		if !sameSession(properties, s.sessionID) {
 			return false, nil, nil
@@ -593,16 +678,29 @@ func (s *session) checkTurnState(
 		return false, nil, err
 	}
 	if strings.TrimSpace(summary.Error) != "" {
-		emitUpdate(handler, s.processPID, "notification", map[string]any{
-			"method": "session.error",
-			"params": map[string]any{
-				"sessionID": s.sessionID,
-				"error": map[string]any{
-					"message": summary.Error,
+		message := strings.TrimSpace(summary.Error)
+		if isIgnorableSessionErrorMessage(message) {
+			emitUpdate(handler, s.processPID, "notification", map[string]any{
+				"method": "session.error",
+				"params": map[string]any{
+					"sessionID": s.sessionID,
+					"error": map[string]any{
+						"message": message,
+					},
 				},
-			},
-		})
-		return false, nil, fmt.Errorf("opencode session error: %s", summary.Error)
+			})
+		} else {
+			emitUpdate(handler, s.processPID, "notification", map[string]any{
+				"method": "session.error",
+				"params": map[string]any{
+					"sessionID": s.sessionID,
+					"error": map[string]any{
+						"message": message,
+					},
+				},
+			})
+			return false, nil, fmt.Errorf("opencode session error: %s", message)
+		}
 	}
 	if !summary.Found {
 		return false, nil, fmt.Errorf("opencode session became idle without assistant output")
@@ -923,6 +1021,14 @@ func sameSession(payload map[string]any, sessionID string) bool {
 func sessionErrorMessage(payload map[string]any) string {
 	errPayload, _ := payload["error"].(map[string]any)
 	return errorMessageFromMap(errPayload)
+}
+
+func isIgnorableSessionErrorMessage(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if normalized == "" {
+		return false
+	}
+	return strings.Contains(normalized, "reasoning part") && strings.Contains(normalized, "not found")
 }
 
 func errorMessageFromMap(errPayload map[string]any) string {

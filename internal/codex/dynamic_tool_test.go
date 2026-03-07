@@ -3,12 +3,11 @@ package codex
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
 	"baton/internal/config"
+	"baton/internal/tracker"
 	"baton/internal/workflow"
 )
 
@@ -30,147 +29,80 @@ func TestDynamicToolUnsupportedTool(t *testing.T) {
 	}
 }
 
-func TestDynamicToolLinearGraphQLSuccessAndGraphQLError(t *testing.T) {
+func TestDynamicToolLinearGraphQLUnsupported(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Header.Get("Authorization") != "token" {
-			t.Fatalf("expected auth token header")
-		}
-
-		var payload map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		query, _ := payload["query"].(string)
-		if query == "query Viewer { viewer { id } }" {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"data": map[string]any{"viewer": map[string]any{"id": "usr_123"}},
-			})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data":   nil,
-			"errors": []any{map[string]any{"message": "boom"}},
-		})
-	}))
-	defer server.Close()
-
 	executor := NewDynamicToolExecutor(mustDynamicToolConfig(t, map[string]any{
-		"tracker": map[string]any{
-			"kind":         "linear",
-			"api_key":      "token",
-			"project_slug": "proj",
-			"endpoint":     server.URL,
-		},
+		"tracker": map[string]any{"kind": "linear"},
 	}))
 
-	okResult := executor.Execute(context.Background(), linearGraphQLTool, map[string]any{
+	result := executor.Execute(context.Background(), "linear_graphql", map[string]any{
 		"query": "query Viewer { viewer { id } }",
-	})
-	if success, _ := okResult["success"].(bool); !success {
-		t.Fatalf("expected success result, got %#v", okResult)
-	}
-
-	errResult := executor.Execute(context.Background(), linearGraphQLTool, map[string]any{
-		"query": "query Broken { nope }",
-	})
-	if success, _ := errResult["success"].(bool); success {
-		t.Fatalf("expected graphql error result failure, got %#v", errResult)
-	}
-}
-
-func TestDynamicToolLinearGraphQLValidationErrors(t *testing.T) {
-	t.Parallel()
-
-	executor := NewDynamicToolExecutor(mustDynamicToolConfig(t, map[string]any{
-		"tracker": map[string]any{"kind": "memory"},
-	}))
-
-	cases := []any{
-		map[string]any{"variables": map[string]any{"x": 1}},
-		[]any{"bad"},
-		map[string]any{"query": "q", "variables": []any{"bad"}},
-	}
-
-	for _, tc := range cases {
-		result := executor.Execute(context.Background(), linearGraphQLTool, tc)
-		if success, _ := result["success"].(bool); success {
-			t.Fatalf("expected validation failure for %#v, got %#v", tc, result)
-		}
-	}
-}
-
-func TestDynamicToolLinearGraphQLRejectsMultipleOperations(t *testing.T) {
-	t.Parallel()
-
-	executor := NewDynamicToolExecutor(mustDynamicToolConfig(t, map[string]any{
-		"tracker": map[string]any{"kind": "memory"},
-	}))
-
-	result := executor.Execute(context.Background(), linearGraphQLTool, map[string]any{
-		"query": `
-			query ViewerA { viewer { id } }
-			query ViewerB { viewer { name } }
-		`,
 	})
 	if success, _ := result["success"].(bool); success {
-		t.Fatalf("expected multi-operation validation failure, got %#v", result)
-	}
-
-	payload := decodeContentJSON(t, firstContentText(t, result))
-	if got := mapStringValue(payload, "error", "message"); got != "`linear_graphql.query` must contain exactly one GraphQL operation." {
-		t.Fatalf("unexpected multi-operation validation error: %#v", payload)
+		t.Fatalf("expected linear_graphql to be unsupported, got %#v", result)
 	}
 }
 
-func TestDynamicToolLinearGraphQLMissingTokenAndStatusMapping(t *testing.T) {
+func TestDynamicToolTrackerGetIssueAndUpdateState(t *testing.T) {
 	t.Parallel()
 
-	missingTokenExecutor := NewDynamicToolExecutor(mustDynamicToolConfig(t, map[string]any{
+	executor := NewDynamicToolExecutor(mustDynamicToolConfig(t, map[string]any{
 		"tracker": map[string]any{
-			"kind":         "linear",
-			"api_key":      nil,
-			"project_slug": "proj",
-			"endpoint":     "http://127.0.0.1:1",
+			"kind": "memory",
 		},
 	}))
-	missingToken := missingTokenExecutor.Execute(context.Background(), linearGraphQLTool, map[string]any{
-		"query": "query Viewer { viewer { id } }",
+
+	tracker.SetMemoryIssues([]tracker.Issue{
+		{ID: "issue-1", Identifier: "BAC-1", Title: "Title", State: "Todo", URL: "https://linear.app/issue/BAC-1"},
 	})
-	if success, _ := missingToken["success"].(bool); success {
-		t.Fatalf("expected missing token failure")
+	t.Cleanup(tracker.ClearMemoryIssues)
+
+	getResult := executor.Execute(context.Background(), trackerGetIssueTool, map[string]any{
+		"issue_id": "issue-1",
+	})
+	if success, _ := getResult["success"].(bool); !success {
+		t.Fatalf("expected get issue success, got %#v", getResult)
 	}
-	tokenPayload := decodeContentJSON(t, firstContentText(t, missingToken))
-	message := mapStringValue(tokenPayload, "error", "message")
-	if message == "" {
-		t.Fatalf("expected missing token message, got %#v", tokenPayload)
+	payload := decodeContentJSON(t, firstContentText(t, getResult))
+	issue, _ := payload["issue"].(map[string]any)
+	if got, _ := issue["identifier"].(string); got != "BAC-1" {
+		t.Fatalf("unexpected identifier payload: %#v", payload)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"errors":[{"message":"down"}]}`))
-	}))
-	defer server.Close()
+	updateResult := executor.Execute(context.Background(), trackerUpdateStateTool, map[string]any{
+		"issue_id": "issue-1",
+		"state":    "In Review",
+	})
+	if success, _ := updateResult["success"].(bool); !success {
+		t.Fatalf("expected update state success, got %#v", updateResult)
+	}
+}
 
-	statusExecutor := NewDynamicToolExecutor(mustDynamicToolConfig(t, map[string]any{
+func TestDynamicToolTrackerWorkpadAndLink(t *testing.T) {
+	t.Parallel()
+
+	executor := NewDynamicToolExecutor(mustDynamicToolConfig(t, map[string]any{
 		"tracker": map[string]any{
-			"kind":         "linear",
-			"api_key":      "token",
-			"project_slug": "proj",
-			"endpoint":     server.URL,
+			"kind": "memory",
 		},
 	}))
-	statusResult := statusExecutor.Execute(context.Background(), linearGraphQLTool, map[string]any{
-		"query": "query Viewer { viewer { id } }",
+
+	commentResult := executor.Execute(context.Background(), trackerUpsertWorkpadCommentTool, map[string]any{
+		"issue_id": "issue-2",
+		"body":     "workpad content",
 	})
-	if success, _ := statusResult["success"].(bool); success {
-		t.Fatalf("expected status failure, got %#v", statusResult)
+	if success, _ := commentResult["success"].(bool); !success {
+		t.Fatalf("expected workpad comment success, got %#v", commentResult)
 	}
-	statusPayload := decodeContentJSON(t, firstContentText(t, statusResult))
-	if got := mapIntValue(statusPayload, "error", "status"); got != 503 {
-		t.Fatalf("expected mapped status=503, got %#v", statusPayload)
+
+	linkResult := executor.Execute(context.Background(), trackerAddLinkTool, map[string]any{
+		"issue_id": "issue-2",
+		"url":      "https://github.com/openai/openai",
+		"title":    "repo",
+	})
+	if success, _ := linkResult["success"].(bool); !success {
+		t.Fatalf("expected add link success, got %#v", linkResult)
 	}
 }
 

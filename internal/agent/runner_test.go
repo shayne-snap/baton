@@ -42,6 +42,10 @@ func (s *stubTracker) UpdateIssueState(context.Context, string, string) error {
 	return nil
 }
 
+func (s *stubTracker) AddLink(context.Context, string, string, string) error {
+	return nil
+}
+
 func TestAgentRunnerKeepsWorkspaceAfterSuccessfulCodexRun(t *testing.T) {
 	testRoot := t.TempDir()
 	workspaceRoot := filepath.Join(testRoot, "workspaces")

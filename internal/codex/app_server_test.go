@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -221,7 +219,7 @@ done
 		t.Fatalf("expected initialize payload with experimentalApi=true, lines=%#v", lines)
 	}
 	if !containsDynamicToolSpec(lines) {
-		t.Fatalf("expected thread/start payload to include linear_graphql dynamic tool spec")
+		t.Fatalf("expected thread/start payload to include tracker_get_issue dynamic tool spec")
 	}
 	if !containsApprovalDecision(lines, 99, decisionAcceptForSession) {
 		t.Fatalf("expected approval decision payload for id=99")
@@ -426,17 +424,6 @@ func TestAppServerEmitsSupportedDynamicToolSuccessEvent(t *testing.T) {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "token" {
-			t.Fatalf("expected Authorization header to be token, got %q", got)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": map[string]any{"viewer": map[string]any{"id": "usr_123"}},
-		})
-	}))
-	defer server.Close()
-
 	traceFile := filepath.Join(testRoot, "codex-supported-tool-success.trace")
 	codexBinary := filepath.Join(testRoot, "fake-codex")
 	writeScript(t, codexBinary, `
@@ -456,7 +443,7 @@ while IFS= read -r line; do
       ;;
     4)
       printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-630"}}}'
-      printf '%s\n' '{"id":130,"method":"item/tool/call","params":{"name":"linear_graphql","callId":"call-630","arguments":{"query":"query Viewer { viewer { id } }"}}}'
+      printf '%s\n' '{"id":130,"method":"item/tool/call","params":{"name":"tracker_get_issue","callId":"call-630","arguments":{"issue_id":"issue-supported-tool-success"}}}'
       ;;
     5)
       printf '%s\n' '{"method":"turn/completed"}'
@@ -472,15 +459,16 @@ done
 
 	client := mustAppServer(t, workspaceRoot, map[string]any{
 		"tracker": map[string]any{
-			"kind":         "linear",
-			"api_key":      "token",
-			"project_slug": "proj",
-			"endpoint":     server.URL,
+			"kind": "memory",
 		},
 		"codex": map[string]any{
 			"command": codexBinary + " app-server",
 		},
 	})
+	tracker.SetMemoryIssues([]tracker.Issue{
+		{ID: "issue-supported-tool-success", Identifier: "MT-630", Title: "Supported tool success", State: "Todo"},
+	})
+	t.Cleanup(tracker.ClearMemoryIssues)
 	issue := tracker.Issue{
 		ID:         "issue-supported-tool-success",
 		Identifier: "MT-630",
@@ -543,7 +531,7 @@ while IFS= read -r line; do
       ;;
     4)
       printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-631"}}}'
-      printf '%s\n' '{"id":131,"method":"item/tool/call","params":{"name":"linear_graphql","callId":"call-631","arguments":{"query":"query Viewer { viewer { id } }"}}}'
+      printf '%s\n' '{"id":131,"method":"item/tool/call","params":{"name":"tracker_get_issue","callId":"call-631","arguments":{}}}'
       ;;
     5)
       printf '%s\n' '{"method":"turn/completed"}'
@@ -559,8 +547,7 @@ done
 
 	client := mustAppServer(t, workspaceRoot, map[string]any{
 		"tracker": map[string]any{
-			"kind":         "linear",
-			"project_slug": "proj",
+			"kind": "memory",
 		},
 		"codex": map[string]any{
 			"command": codexBinary + " app-server",
@@ -881,10 +868,10 @@ func containsDynamicToolSpec(lines []map[string]any) bool {
 		for _, rawTool := range dynamicTools {
 			tool, _ := rawTool.(map[string]any)
 			name, _ := tool["name"].(string)
-			if name == "linear_graphql" {
+			if name == "tracker_get_issue" {
 				inputSchema, _ := tool["inputSchema"].(map[string]any)
 				required, _ := inputSchema["required"].([]any)
-				if len(required) == 1 && required[0] == "query" {
+				if len(required) == 1 && required[0] == "issue_id" {
 					return true
 				}
 			}

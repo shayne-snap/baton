@@ -66,9 +66,10 @@ type runtimeState struct {
 }
 
 type runningEntry struct {
-	issue      tracker.Issue
-	identifier string
-	startedAt  time.Time
+	issue       tracker.Issue
+	identifier  string
+	startedAt   time.Time
+	runtimeKind string
 
 	sessionID         string
 	codexAppServerPID string
@@ -341,6 +342,7 @@ func (o *Orchestrator) snapshotPayload(state *runtimeState) map[string]any {
 			"issue_id":             issueID,
 			"identifier":           metadata.identifier,
 			"state":                metadata.issue.State,
+			"runtime_kind":         metadata.runtimeKind,
 			"session_id":           metadata.sessionID,
 			"codex_app_server_pid": metadata.codexAppServerPID,
 			"codex_input_tokens":   metadata.codexInputTokens,
@@ -635,6 +637,7 @@ func (o *Orchestrator) dispatchIssue(ctx context.Context, state *runtimeState, i
 		issue:        issue,
 		identifier:   issue.Identifier,
 		startedAt:    time.Now().UTC(),
+		runtimeKind:  o.config.AgentRuntimeKind(),
 		retryAttempt: normalizeRetryAttempt(attempt),
 		cancel:       cancel,
 	}

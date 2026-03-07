@@ -32,9 +32,10 @@ const (
 	runningAgeWidth          = 12
 	runningTokensWidth       = 10
 	runningSessionWidth      = 14
+	runningRuntimeWidth      = 8
 	runningEventDefaultWidth = 44
 	runningEventMinWidth     = 12
-	runningRowChromeWidth    = 10
+	runningRowChromeWidth    = 11
 	defaultTerminalColumns   = 115
 )
 
@@ -108,7 +109,12 @@ type TokenSample struct {
 
 type RenderOptions struct {
 	MaxConcurrentAgents int
+	TrackerKind         string
 	LinearProjectSlug   string
+	JiraBaseURL         string
+	JiraProjectKey      string
+	FeishuBaseURL       string
+	FeishuProjectKey    string
 	ServerHost          string
 	ConfiguredPort      *int
 	BoundPort           *int
@@ -316,7 +322,12 @@ func (d *Dashboard) snapshotData(now time.Time) (map[string]any, string) {
 func (d *Dashboard) renderOptions() RenderOptions {
 	opts := RenderOptions{
 		MaxConcurrentAgents: d.cfg.MaxConcurrentAgents(),
+		TrackerKind:         d.cfg.TrackerKind(),
 		LinearProjectSlug:   d.cfg.LinearProjectSlug(),
+		JiraBaseURL:         d.cfg.JiraBaseURL(),
+		JiraProjectKey:      d.cfg.JiraProjectKey(),
+		FeishuBaseURL:       d.cfg.FeishuBaseURL(),
+		FeishuProjectKey:    d.cfg.FeishuProjectKey(),
 		ServerHost:          d.cfg.ServerHost(),
 		ConfiguredPort:      d.cfg.ServerPort(),
 	}
@@ -1034,8 +1045,8 @@ func formatErrorValue(value any) string {
 
 func formatProjectLinkLines(opts RenderOptions) []string {
 	projectPart := colorize("n/a", ansiGray)
-	if strings.TrimSpace(opts.LinearProjectSlug) != "" {
-		projectPart = colorize(linearProjectURL(strings.TrimSpace(opts.LinearProjectSlug)), ansiCyan)
+	if projectURL := trackerProjectURL(opts); strings.TrimSpace(projectURL) != "" {
+		projectPart = colorize(projectURL, ansiCyan)
 	}
 	lines := []string{
 		colorize("│ Project: ", ansiBold) + projectPart,
@@ -1064,6 +1075,46 @@ func formatProjectRefreshLine(polling map[string]any) string {
 
 func linearProjectURL(projectSlug string) string {
 	return "https://linear.app/project/" + projectSlug + "/issues"
+}
+
+func jiraProjectURL(baseURL string, projectKey string) string {
+	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	trimmedProjectKey := strings.TrimSpace(projectKey)
+	if trimmedBase == "" || trimmedProjectKey == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/jira/software/projects/%s/issues", trimmedBase, trimmedProjectKey)
+}
+
+func feishuProjectURL(baseURL string, projectKey string) string {
+	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	trimmedProjectKey := strings.TrimSpace(projectKey)
+	if trimmedBase == "" || trimmedProjectKey == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/project/%s", trimmedBase, trimmedProjectKey)
+}
+
+func trackerProjectURL(opts RenderOptions) string {
+	switch strings.ToLower(strings.TrimSpace(opts.TrackerKind)) {
+	case "jira":
+		if jiraURL := jiraProjectURL(opts.JiraBaseURL, opts.JiraProjectKey); jiraURL != "" {
+			return jiraURL
+		}
+	case "feishu":
+		if feishuURL := feishuProjectURL(opts.FeishuBaseURL, opts.FeishuProjectKey); feishuURL != "" {
+			return feishuURL
+		}
+	case "linear":
+		if linearSlug := strings.TrimSpace(opts.LinearProjectSlug); linearSlug != "" {
+			return linearProjectURL(linearSlug)
+		}
+	default:
+		if linearSlug := strings.TrimSpace(opts.LinearProjectSlug); linearSlug != "" {
+			return linearProjectURL(linearSlug)
+		}
+	}
+	return ""
 }
 
 func dashboardURL(host string, configuredPort *int, boundPort *int) string {
@@ -1157,6 +1208,7 @@ func formatRunningSummary(runningEntry map[string]any, runningEventWidth int) st
 	state := orDefault(anyToString(runningEntry["state"]), "unknown")
 	stateDisplay := formatCell(state, runningStageWidth, false)
 	session := formatCell(compactSessionID(anyToString(runningEntry["session_id"])), runningSessionWidth, false)
+	runtimeKind := formatCell(orDefault(anyToString(runningEntry["runtime_kind"]), "unknown"), runningRuntimeWidth, false)
 	pid := formatCell(orDefault(anyToString(runningEntry["codex_app_server_pid"]), "n/a"), runningPIDWidth, false)
 	totalTokens := max(intValue(runningEntry["codex_total_tokens"]), 0)
 	runtimeSeconds := max(intValue(runningEntry["runtime_seconds"]), 0)
@@ -1191,6 +1243,8 @@ func formatRunningSummary(runningEntry map[string]any, runningEventWidth int) st
 		colorize(age, ansiMagenta),
 		" ",
 		colorize(tokens, ansiYellow),
+		" ",
+		colorize(runtimeKind, ansiCyan),
 		" ",
 		colorize(session, ansiCyan),
 		" ",
@@ -1301,6 +1355,7 @@ func runningTableHeaderRow(runningEventWidth int) string {
 		formatCell("PID", runningPIDWidth, false),
 		formatCell("AGE / TURN", runningAgeWidth, false),
 		formatCell("TOKENS", runningTokensWidth, false),
+		formatCell("RUNTIME", runningRuntimeWidth, false),
 		formatCell("SESSION", runningSessionWidth, false),
 		formatCell("EVENT", runningEventWidth, false),
 	}, " ")
@@ -1308,7 +1363,7 @@ func runningTableHeaderRow(runningEventWidth int) string {
 }
 
 func runningTableSeparatorRow(runningEventWidth int) string {
-	separatorWidth := runningIDWidth + runningStageWidth + runningPIDWidth + runningAgeWidth + runningTokensWidth + runningSessionWidth + runningEventWidth + 6
+	separatorWidth := runningIDWidth + runningStageWidth + runningPIDWidth + runningAgeWidth + runningTokensWidth + runningSessionWidth + runningEventWidth + runningRuntimeWidth + 7
 	return "│   " + colorize(strings.Repeat("─", separatorWidth), ansiGray)
 }
 
@@ -1320,7 +1375,7 @@ func runningEventWidth(terminalColumns int) int {
 }
 
 func fixedRunningWidth() int {
-	return runningIDWidth + runningStageWidth + runningPIDWidth + runningAgeWidth + runningTokensWidth + runningSessionWidth
+	return runningIDWidth + runningStageWidth + runningPIDWidth + runningAgeWidth + runningTokensWidth + runningSessionWidth + runningRuntimeWidth
 }
 
 func detectTerminalColumns() int {

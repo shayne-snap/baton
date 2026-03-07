@@ -55,6 +55,7 @@ func NewRootCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.acknowledged, acknowledgementFlag, false, "Acknowledge running without usual guardrails")
 	cmd.AddCommand(
 		newMCPLinearServerCommand(),
+		newMCPTrackerServerCommand(),
 		newWorkspaceBeforeRemoveCommand(),
 		newPRBodyCheckCommand(),
 		newSpecsCheckCommand(),

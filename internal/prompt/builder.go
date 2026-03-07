@@ -26,10 +26,23 @@ func (b *Builder) BuildPrompt(issue tracker.Issue, attempt *int) (string, error)
 	if attempt != nil {
 		attemptValue = *attempt
 	}
+	lifecycle := b.config.TrackerLifecycle()
 
 	bindings := map[string]any{
 		"attempt": attemptValue,
 		"issue":   normalizeValue(issue),
+		"tracker": map[string]any{
+			"kind": b.config.TrackerKind(),
+			"lifecycle": map[string]any{
+				"backlog":      lifecycle.Backlog,
+				"todo":         lifecycle.Todo,
+				"in_progress":  lifecycle.InProgress,
+				"human_review": lifecycle.HumanReview,
+				"merging":      lifecycle.Merging,
+				"rework":       lifecycle.Rework,
+				"done":         lifecycle.Done,
+			},
+		},
 	}
 
 	out, err := b.engine.Render(b.config.WorkflowPrompt(), bindings)

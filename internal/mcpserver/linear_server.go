@@ -16,15 +16,14 @@ import (
 )
 
 const (
-	linearMCPServerName        = "baton-linear"
-	linearMCPServerVersion     = "0.1.0"
-	linearMCPToolName          = "graphql"
+	trackerMCPServerName       = "baton-tracker"
+	trackerMCPServerVersion    = "0.1.0"
 	defaultMCPProtocolVersion  = "2025-11-25"
 	messageFormatContentLength = "content-length"
 	messageFormatJSONLine      = "json-line"
 )
 
-type linearServer struct {
+type trackerServer struct {
 	in       *bufio.Reader
 	out      *bufio.Writer
 	executor *codex.DynamicToolExecutor
@@ -62,12 +61,21 @@ type initializeParams struct {
 func ServeLinearStdio(ctx context.Context, endpoint string, apiKey string) error {
 	cfg := &config.Config{
 		Tracker: config.TrackerConfig{
-			Kind:     "linear",
-			Endpoint: strings.TrimSpace(endpoint),
-			APIKey:   strings.TrimSpace(apiKey),
+			Kind: "linear",
+			Linear: config.TrackerLinearConfig{
+				Endpoint: strings.TrimSpace(endpoint),
+				APIKey:   strings.TrimSpace(apiKey),
+			},
 		},
 	}
-	server := &linearServer{
+	return ServeTrackerStdio(ctx, cfg)
+}
+
+func ServeTrackerStdio(ctx context.Context, cfg *config.Config) error {
+	if cfg == nil {
+		return fmt.Errorf("nil tracker config")
+	}
+	server := &trackerServer{
 		in:       bufio.NewReader(os.Stdin),
 		out:      bufio.NewWriter(os.Stdout),
 		executor: codex.NewDynamicToolExecutor(cfg),
@@ -75,7 +83,7 @@ func ServeLinearStdio(ctx context.Context, endpoint string, apiKey string) error
 	return server.serve(ctx)
 }
 
-func (s *linearServer) serve(ctx context.Context) error {
+func (s *trackerServer) serve(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -116,7 +124,7 @@ func (s *linearServer) serve(ctx context.Context) error {
 	}
 }
 
-func (s *linearServer) handleRequest(ctx context.Context, req jsonRPCRequest) (any, *jsonRPCError) {
+func (s *trackerServer) handleRequest(ctx context.Context, req jsonRPCRequest) (any, *jsonRPCError) {
 	switch req.Method {
 	case "initialize":
 		protocolVersion := requestedProtocolVersion(req.Params)
@@ -129,8 +137,8 @@ func (s *linearServer) handleRequest(ctx context.Context, req jsonRPCRequest) (a
 				"tools": map[string]any{},
 			},
 			"serverInfo": map[string]any{
-				"name":    linearMCPServerName,
-				"version": linearMCPServerVersion,
+				"name":    trackerMCPServerName,
+				"version": trackerMCPServerVersion,
 			},
 		}, nil
 	case "ping":
@@ -138,25 +146,20 @@ func (s *linearServer) handleRequest(ctx context.Context, req jsonRPCRequest) (a
 	case "notifications/initialized":
 		return map[string]any{}, nil
 	case "tools/list":
-		spec := firstToolSpec()
 		return map[string]any{
-			"tools": []map[string]any{
-				{
-					"name":        linearMCPToolName,
-					"description": stringValue(spec["description"]),
-					"inputSchema": spec["inputSchema"],
-				},
-			},
+			"tools": mcpToolSpecs(),
 		}, nil
 	case "tools/call":
 		var params toolCallParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return nil, &jsonRPCError{Code: -32602, Message: "invalid params"}
 		}
-		if params.Name != linearMCPToolName {
+		toolName := strings.TrimSpace(params.Name)
+		codexToolName := codexToolNameForMCPTool(toolName)
+		if codexToolName == "" {
 			return nil, &jsonRPCError{Code: -32601, Message: fmt.Sprintf("unknown tool %q", params.Name)}
 		}
-		result := s.executor.Execute(ctx, codex.LinearGraphQLTool, params.Arguments)
+		result := s.executor.Execute(ctx, codexToolName, params.Arguments)
 		return toMCPToolResult(result), nil
 	case "resources/list", "prompts/list":
 		return map[string]any{}, nil
@@ -165,7 +168,7 @@ func (s *linearServer) handleRequest(ctx context.Context, req jsonRPCRequest) (a
 	}
 }
 
-func (s *linearServer) readMessage() ([]byte, error) {
+func (s *trackerServer) readMessage() ([]byte, error) {
 	if err := s.detectMessageFormat(); err != nil {
 		return nil, err
 	}
@@ -175,7 +178,7 @@ func (s *linearServer) readMessage() ([]byte, error) {
 	return s.readContentLengthMessage()
 }
 
-func (s *linearServer) detectMessageFormat() error {
+func (s *trackerServer) detectMessageFormat() error {
 	if s.format != "" {
 		return nil
 	}
@@ -199,7 +202,7 @@ func (s *linearServer) detectMessageFormat() error {
 	}
 }
 
-func (s *linearServer) readJSONLineMessage() ([]byte, error) {
+func (s *trackerServer) readJSONLineMessage() ([]byte, error) {
 	for {
 		line, err := s.in.ReadBytes('\n')
 		if err != nil && !(err == io.EOF && len(line) > 0) {
@@ -216,7 +219,7 @@ func (s *linearServer) readJSONLineMessage() ([]byte, error) {
 	}
 }
 
-func (s *linearServer) readContentLengthMessage() ([]byte, error) {
+func (s *trackerServer) readContentLengthMessage() ([]byte, error) {
 	contentLength := -1
 	for {
 		line, err := s.in.ReadString('\n')
@@ -246,7 +249,7 @@ func (s *linearServer) readContentLengthMessage() ([]byte, error) {
 	return payload, nil
 }
 
-func (s *linearServer) writeResult(id json.RawMessage, result any) error {
+func (s *trackerServer) writeResult(id json.RawMessage, result any) error {
 	return s.writeMessage(jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -254,7 +257,7 @@ func (s *linearServer) writeResult(id json.RawMessage, result any) error {
 	})
 }
 
-func (s *linearServer) writeError(id json.RawMessage, code int, message string) error {
+func (s *trackerServer) writeError(id json.RawMessage, code int, message string) error {
 	return s.writeMessage(jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
@@ -265,7 +268,7 @@ func (s *linearServer) writeError(id json.RawMessage, code int, message string) 
 	})
 }
 
-func (s *linearServer) writeMessage(msg jsonRPCResponse) error {
+func (s *trackerServer) writeMessage(msg jsonRPCResponse) error {
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return err
@@ -299,12 +302,34 @@ func requestedProtocolVersion(raw json.RawMessage) string {
 	return strings.TrimSpace(params.ProtocolVersion)
 }
 
-func firstToolSpec() map[string]any {
+func mcpToolSpecs() []map[string]any {
 	specs := codex.ToolSpecs()
 	if len(specs) == 0 {
-		return map[string]any{}
+		return []map[string]any{}
 	}
-	return specs[0]
+	tools := make([]map[string]any, 0, len(specs))
+	for _, spec := range specs {
+		name := strings.TrimSpace(stringValue(spec["name"]))
+		if name == "" {
+			continue
+		}
+		tools = append(tools, map[string]any{
+			"name":        name,
+			"description": stringValue(spec["description"]),
+			"inputSchema": spec["inputSchema"],
+		})
+	}
+	return tools
+}
+
+func codexToolNameForMCPTool(name string) string {
+	for _, spec := range codex.ToolSpecs() {
+		specName := strings.TrimSpace(stringValue(spec["name"]))
+		if specName == name {
+			return specName
+		}
+	}
+	return ""
 }
 
 func toMCPToolResult(result map[string]any) map[string]any {

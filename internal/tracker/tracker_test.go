@@ -353,6 +353,176 @@ func TestNewClientFallsBackToLinear(t *testing.T) {
 	}
 }
 
+func TestNewClientUsesJiraTrackerKind(t *testing.T) {
+	t.Setenv("BATON_ASSIGNEE", "me")
+
+	var capturedJQL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/myself":
+			_ = json.NewEncoder(w).Encode(map[string]any{"accountId": "jira-user-1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/search/jql":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode search payload: %v", err)
+			}
+			capturedJQL = stringValue(payload["jql"])
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issues": []any{
+					map[string]any{
+						"id":  "10001",
+						"key": "BAC-15",
+						"fields": map[string]any{
+							"summary": "Implement jira client",
+							"description": map[string]any{
+								"type":    "doc",
+								"version": 1,
+								"content": []any{
+									map[string]any{
+										"type": "paragraph",
+										"content": []any{
+											map[string]any{"type": "text", "text": "desc"},
+										},
+									},
+								},
+							},
+							"status":   map[string]any{"name": "In Progress"},
+							"assignee": map[string]any{"accountId": "jira-user-1"},
+							"labels":   []any{"backend"},
+							"created":  "2026-01-01T00:00:00.000+0000",
+							"updated":  "2026-01-01T01:00:00.000+0000",
+						},
+					},
+				},
+				"total": 1,
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := mustTrackerConfig(t, map[string]any{
+		"tracker": map[string]any{
+			"kind": "jira",
+			"jira": map[string]any{
+				"base_url":    server.URL,
+				"project_key": "BAC",
+				"auth": map[string]any{
+					"type":      "email_api_token",
+					"email":     "jira@example.com",
+					"api_token": "jira-token",
+				},
+			},
+			"routing": map[string]any{
+				"assignee":        "$BATON_ASSIGNEE",
+				"active_states":   []any{"To Do", "In Progress"},
+				"terminal_states": []any{"Done"},
+			},
+		},
+	})
+
+	client := NewClient(cfg)
+	issues, err := client.FetchCandidateIssues(context.Background())
+	if err != nil {
+		t.Fatalf("jira candidate fetch failed: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %#v", issues)
+	}
+	if issues[0].ID != "BAC-15" || issues[0].Identifier != "BAC-15" {
+		t.Fatalf("unexpected issue identity: %#v", issues[0])
+	}
+	if issues[0].State != "In Progress" {
+		t.Fatalf("unexpected issue state: %#v", issues[0])
+	}
+	if !strings.Contains(strings.ToLower(capturedJQL), "status in") || !strings.Contains(capturedJQL, "assignee = currentUser()") {
+		t.Fatalf("unexpected candidate jql: %q", capturedJQL)
+	}
+}
+
+func TestNewClientUsesFeishuTrackerKind(t *testing.T) {
+	t.Setenv("BATON_ASSIGNEE", "feishu-user-1")
+
+	var filterAuthHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":                0,
+				"msg":                 "ok",
+				"tenant_access_token": "tenant-token-1",
+				"expire":              7200,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/open-apis/project/v1/work_item/filter":
+			filterAuthHeader = r.Header.Get("Authorization")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]any{
+					"items": []any{
+						map[string]any{
+							"work_item_id":  "wi-1",
+							"work_item_key": "BAC-88",
+							"title":         "Implement Feishu client",
+							"description":   "desc",
+							"state":         map[string]any{"name": "In Progress"},
+							"assignee":      map[string]any{"user_key": "feishu-user-1"},
+							"labels":        []any{"backend"},
+							"created_at":    "2026-01-01T00:00:00Z",
+							"updated_at":    "2026-01-01T01:00:00Z",
+						},
+					},
+					"has_more": false,
+				},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := mustTrackerConfig(t, map[string]any{
+		"tracker": map[string]any{
+			"kind": "feishu",
+			"routing": map[string]any{
+				"assignee":        "$BATON_ASSIGNEE",
+				"active_states":   []any{"To Do", "In Progress"},
+				"terminal_states": []any{"Done"},
+			},
+			"feishu": map[string]any{
+				"base_url":    server.URL,
+				"project_key": "BAC",
+				"app_id":      "app-id",
+				"app_secret":  "app-secret",
+			},
+		},
+	})
+
+	client := NewClient(cfg)
+	issues, err := client.FetchCandidateIssues(context.Background())
+	if err != nil {
+		t.Fatalf("feishu candidate fetch failed: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %#v", issues)
+	}
+	if issues[0].ID != "wi-1" || issues[0].Identifier != "BAC-88" {
+		t.Fatalf("unexpected issue identity: %#v", issues[0])
+	}
+	if issues[0].State != "In Progress" {
+		t.Fatalf("unexpected issue state: %#v", issues[0])
+	}
+	if !issues[0].AssignedToWorker {
+		t.Fatalf("expected issue to be assigned to worker: %#v", issues[0])
+	}
+	if got := strings.TrimSpace(filterAuthHeader); got != "Bearer tenant-token-1" {
+		t.Fatalf("unexpected filter auth header: %q", got)
+	}
+}
+
 func TestMemoryClientWriteMethods(t *testing.T) {
 	t.Parallel()
 
@@ -364,6 +534,9 @@ func TestMemoryClientWriteMethods(t *testing.T) {
 	}
 	if err := client.UpdateIssueState(context.Background(), "issue-1", "Done"); err != nil {
 		t.Fatalf("memory update state failed: %v", err)
+	}
+	if err := client.AddLink(context.Background(), "issue-1", "https://example.com/pr/1", "PR #1"); err != nil {
+		t.Fatalf("memory add link failed: %v", err)
 	}
 }
 
@@ -493,6 +666,176 @@ func TestLinearClientWriteFailureMappings(t *testing.T) {
 	}
 }
 
+func TestJiraClientCreateCommentUpdateIssueStateAndAddLink(t *testing.T) {
+	t.Parallel()
+
+	commentCalled := false
+	updateCalled := false
+	linkCalled := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue/BAC-99/comment":
+			commentCalled = true
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode comment payload: %v", err)
+			}
+			body, _ := payload["body"].(map[string]any)
+			if stringValue(body["type"]) != "doc" {
+				t.Fatalf("expected ADF doc body, got %#v", payload["body"])
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "comment-1"})
+		case r.Method == http.MethodGet && r.URL.Path == "/rest/api/3/issue/BAC-99/transitions":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"transitions": []any{
+					map[string]any{
+						"id": "31",
+						"to": map[string]any{"name": "Done"},
+					},
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue/BAC-99/transitions":
+			updateCalled = true
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode transition payload: %v", err)
+			}
+			transition, _ := payload["transition"].(map[string]any)
+			if stringValue(transition["id"]) != "31" {
+				t.Fatalf("expected transition id 31, got %#v", payload)
+			}
+			w.WriteHeader(http.StatusNoContent)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/rest/api/3/issue/BAC-99/remotelink":
+			linkCalled = true
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode remotelink payload: %v", err)
+			}
+			object, _ := payload["object"].(map[string]any)
+			if got := stringValue(object["url"]); got != "https://github.com/openai/openai/pull/10" {
+				t.Fatalf("unexpected link url: %#v", payload)
+			}
+			if got := stringValue(object["title"]); got != "PR #10" {
+				t.Fatalf("unexpected link title: %#v", payload)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "10000"})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewJiraClient(mustTrackerConfig(t, map[string]any{
+		"tracker": map[string]any{
+			"kind": "jira",
+			"jira": map[string]any{
+				"base_url":    server.URL,
+				"project_key": "BAC",
+				"auth": map[string]any{
+					"type":      "email_api_token",
+					"email":     "jira@example.com",
+					"api_token": "jira-token",
+				},
+			},
+		},
+	}))
+
+	if err := client.CreateComment(context.Background(), "BAC-99", "hello"); err != nil {
+		t.Fatalf("create comment failed: %v", err)
+	}
+	if err := client.UpdateIssueState(context.Background(), "BAC-99", "Done"); err != nil {
+		t.Fatalf("update issue state failed: %v", err)
+	}
+	if err := client.AddLink(context.Background(), "BAC-99", "https://github.com/openai/openai/pull/10", "PR #10"); err != nil {
+		t.Fatalf("add link failed: %v", err)
+	}
+	if !commentCalled {
+		t.Fatal("expected comment endpoint to be called")
+	}
+	if !updateCalled {
+		t.Fatal("expected update state endpoint to be called")
+	}
+	if !linkCalled {
+		t.Fatal("expected remotelink endpoint to be called")
+	}
+}
+
+func TestFeishuClientCreateCommentUpdateIssueStateAndAddLink(t *testing.T) {
+	t.Parallel()
+
+	commentCalled := false
+	updateCalled := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":                0,
+				"msg":                 "ok",
+				"tenant_access_token": "tenant-token-feishu",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/open-apis/project/v1/comment/create":
+			commentCalled = true
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode comment payload: %v", err)
+			}
+			if got := strings.TrimSpace(stringValue(payload["work_item_id"])); got != "BAC-99" {
+				t.Fatalf("unexpected comment issue id: %#v", payload)
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"id": "comment-1"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/open-apis/project/v1/work_item/update_state_flow":
+			updateCalled = true
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode update payload: %v", err)
+			}
+			if got := strings.TrimSpace(stringValue(payload["state"])); got != "Done" {
+				t.Fatalf("unexpected state payload: %#v", payload)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "msg": "ok", "data": map[string]any{"updated": true}})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewFeishuClient(mustTrackerConfig(t, map[string]any{
+		"tracker": map[string]any{
+			"kind": "feishu",
+			"feishu": map[string]any{
+				"base_url":    server.URL,
+				"project_key": "BAC",
+				"app_id":      "app-id",
+				"app_secret":  "app-secret",
+			},
+		},
+	}))
+
+	if err := client.CreateComment(context.Background(), "BAC-99", "hello"); err != nil {
+		t.Fatalf("create comment failed: %v", err)
+	}
+	if err := client.UpdateIssueState(context.Background(), "BAC-99", "Done"); err != nil {
+		t.Fatalf("update issue state failed: %v", err)
+	}
+	if err := client.AddLink(context.Background(), "BAC-99", "https://github.com/openai/openai/pull/10", "PR #10"); err != nil {
+		t.Fatalf("add link failed: %v", err)
+	}
+	if !commentCalled {
+		t.Fatal("expected comment endpoint to be called")
+	}
+	if !updateCalled {
+		t.Fatal("expected state update endpoint to be called")
+	}
+}
+
 func mustLinearClient(t *testing.T, cfgMap map[string]any) *linearClient {
 	t.Helper()
 
@@ -507,9 +850,75 @@ func mustLinearClient(t *testing.T, cfgMap map[string]any) *linearClient {
 func mustTrackerConfig(t *testing.T, cfgMap map[string]any) *config.Config {
 	t.Helper()
 
+	cfgMap = withTrackerTestDefaults(cfgMap)
 	cfg, err := config.FromWorkflow(filepath.Join(t.TempDir(), "WORKFLOW.md"), &workflow.Definition{Config: cfgMap})
 	if err != nil {
 		t.Fatalf("FromWorkflow failed: %v", err)
 	}
 	return cfg
+}
+
+func withTrackerTestDefaults(cfgMap map[string]any) map[string]any {
+	merged := map[string]any{}
+	for key, value := range cfgMap {
+		merged[key] = value
+	}
+	trackerRaw, _ := merged["tracker"].(map[string]any)
+	if trackerRaw == nil {
+		return merged
+	}
+	trackerCopy := map[string]any{}
+	for key, value := range trackerRaw {
+		trackerCopy[key] = value
+	}
+	if _, ok := trackerCopy["lifecycle"]; !ok {
+		trackerCopy["lifecycle"] = map[string]any{
+			"backlog":      "Backlog",
+			"todo":         "Todo",
+			"in_progress":  "In Progress",
+			"human_review": "In Review",
+			"merging":      "Merging",
+			"rework":       "Rework",
+			"done":         "Done",
+		}
+	}
+	if _, ok := trackerCopy["routing"]; !ok {
+		routing := map[string]any{
+			"active_states":   []any{"Todo", "In Progress"},
+			"terminal_states": []any{"Closed", "Cancelled", "Canceled", "Duplicate", "Done"},
+		}
+		if assignee, ok := trackerCopy["assignee"]; ok {
+			routing["assignee"] = assignee
+			delete(trackerCopy, "assignee")
+		}
+		if activeStates, ok := trackerCopy["active_states"]; ok {
+			routing["active_states"] = activeStates
+			delete(trackerCopy, "active_states")
+		}
+		if terminalStates, ok := trackerCopy["terminal_states"]; ok {
+			routing["terminal_states"] = terminalStates
+			delete(trackerCopy, "terminal_states")
+		}
+		trackerCopy["routing"] = routing
+	}
+	if _, ok := trackerCopy["linear"]; !ok {
+		linear := map[string]any{}
+		if endpoint, ok := trackerCopy["endpoint"]; ok {
+			linear["endpoint"] = endpoint
+			delete(trackerCopy, "endpoint")
+		}
+		if apiKey, ok := trackerCopy["api_key"]; ok {
+			linear["api_key"] = apiKey
+			delete(trackerCopy, "api_key")
+		}
+		if projectSlug, ok := trackerCopy["project_slug"]; ok {
+			linear["project_slug"] = projectSlug
+			delete(trackerCopy, "project_slug")
+		}
+		if len(linear) > 0 {
+			trackerCopy["linear"] = linear
+		}
+	}
+	merged["tracker"] = trackerCopy
+	return merged
 }

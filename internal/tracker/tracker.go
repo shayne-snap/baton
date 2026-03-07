@@ -33,6 +33,7 @@ var (
 	ErrCommentCreateFailed         = errors.New("comment_create_failed")
 	ErrIssueUpdateFailed           = errors.New("issue_update_failed")
 	ErrStateNotFound               = errors.New("state_not_found")
+	ErrLinkAddFailed               = errors.New("link_add_failed")
 )
 
 const linearQuery = `
@@ -155,6 +156,7 @@ type Client interface {
 	FetchIssueStatesByIDs(ctx context.Context, ids []string) ([]Issue, error)
 	CreateComment(ctx context.Context, issueID string, body string) error
 	UpdateIssueState(ctx context.Context, issueID string, stateName string) error
+	AddLink(ctx context.Context, issueID string, linkURL string, title string) error
 }
 
 type linearClient struct {
@@ -315,6 +317,19 @@ func (c *linearClient) UpdateIssueState(ctx context.Context, issueID string, sta
 		return nil
 	}
 	return ErrIssueUpdateFailed
+}
+
+func (c *linearClient) AddLink(ctx context.Context, issueID string, linkURL string, title string) error {
+	linkURL = strings.TrimSpace(linkURL)
+	if linkURL == "" {
+		return ErrLinkAddFailed
+	}
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = linkURL
+	}
+	body := fmt.Sprintf("Added link: [%s](%s)", title, linkURL)
+	return c.CreateComment(ctx, issueID, body)
 }
 
 func (c *linearClient) fetchByStatesPaged(

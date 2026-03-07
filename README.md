@@ -7,17 +7,21 @@ Baton is a Go implementation of [Symphony](https://github.com/openai/symphony).
   per issue.
 - Starts `codex app-server` from the workspace, streams a workflow prompt, and keeps the session
   alive until the issue resolves to `Done`, `Closed`, `Cancelled`, or `Duplicate`.
-- Provides the `linear_graphql` helper tool when needed so skills can access Linear without
-  repeated authentication.
+- Provides injected `tracker_*` tools so runtime backends can interact with the configured
+  tracker without repeated authentication.
 - Cleans up workspaces once issues leave the active state and shuts down agents cleanly.
+
+## Supported backends
+- Agent runtimes: `codex`, `opencode`, `claudecode`.
+- Trackers: `linear`, `jira`.
 
 ## Preparing your repository
 1. Align your repository with harness engineering practices so Baton can run reliably.
-2. Write a `WORKFLOW.md` that follows the tracker/workspace/hooks/agent/codex schema described in
+2. Write a `WORKFLOW.md` that follows the tracker/workspace/hooks/agent/agent_runtime schema described in
    the SPEC and use YAML front matter for configuration.
 3. Export tracker credentials such as `LINEAR_API_KEY` so hooks and tools can authenticate.
 4. Copy the helper skills you need (`commit`, `push`, `pull`, `land`, `linear`) and ensure the
-   `linear` skill can reach the `linear_graphql` tool Baton serves.
+   runtime can inject Baton’s `tracker_*` tools into the agent backend you use.
 5. Mirror any custom tracker states (e.g., `Rework`, `Human Review`, `Merging`) in your workflow
    configuration and tracker settings so Baton’s lifecycle matches expectations.
 
@@ -25,8 +29,10 @@ Baton is a Go implementation of [Symphony](https://github.com/openai/symphony).
 - Put workspace bootstrapping commands like `git clone ... .` into `hooks.after_create`.
 - `codex.command` should launch `codex app-server` with your chosen sandbox policies; Baton uses
   workspace-scoped sandboxes by default and accepts strings or objects for approval policies.
+- `agent_runtime.kind` supports `codex`, `opencode`, and `claudecode`.
+- `tracker.kind` supports `linear` and `jira`.
 - Path values support `~` and `$VAR`; Baton resolves them before spawning child processes.
-- Environment-backed fields such as `tracker.api_key` can be set to `$LINEAR_API_KEY` so Baton
+- Environment-backed fields such as `tracker.linear.api_key` can be set to `$LINEAR_API_KEY` so Baton
   reads the correct runtime value.
 - If `WORKFLOW.md` is missing or invalid, Baton refuses to start so you notice configuration
   issues immediately.

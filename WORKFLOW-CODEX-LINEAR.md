@@ -1,13 +1,12 @@
 ---
 tracker:
-  kind: jira
+  kind: linear
   routing:
     assignee: ""
     active_states:
       - Backlog
-      - To Do
+      - Todo
       - In Progress
-      - Review
       - Ready to Merge
       - Rework
     terminal_states:
@@ -15,9 +14,9 @@ tracker:
       - Done
   lifecycle:
     backlog: Backlog
-    todo: To Do
+    todo: Todo
     in_progress: In Progress
-    human_review: Review
+    human_review: In Review
     merging: Ready to Merge
     rework: Rework
     done: Done
@@ -25,13 +24,6 @@ tracker:
     endpoint: "https://api.linear.app/graphql"
     api_key: "$LINEAR_API_KEY"
     project_slug: "baton-b6f0d2af0f10"
-  jira:
-    base_url: "https://linnana9808.atlassian.net"
-    project_key: "KAN"
-    auth:
-      type: "email_api_token"
-      email: "$JIRA_EMAIL"
-      api_token: "$JIRA_API_TOKEN"
 polling:
   interval_ms: 5000
 workspace:
@@ -50,45 +42,24 @@ agent:
   max_concurrent_agents: 10
   max_turns: 20
 agent_runtime:
-  kind: opencode
-  opencode:
-    command: opencode serve
-    permission:
-      - permission: "*"
-        pattern: "*"
-        action: allow
-      - permission: "external_directory"
-        pattern: "*"
-        action: deny
-      - permission: "question"
-        pattern: "*"
-        action: allow
+  kind: codex
+  codex:
+    command: codex app-server
 ---
 
 Runtime configuration notes:
 
 - Baton now prefers `agent_runtime` for selecting the backend that executes agent turns.
-- Supported values today are `codex`, `opencode`, and `claudecode`.
+- Supported values today are `codex` and `opencode`.
 - The legacy top-level `codex:` block is still accepted for backward compatibility, but new workflows should use `agent_runtime`.
 
-Example `opencode` runtime configuration:
+Example `codex` runtime configuration:
 
 ```yaml
 agent_runtime:
-  kind: opencode
-  opencode:
-    command: opencode serve
-```
-
-Example `claudecode` runtime configuration:
-
-```yaml
-agent_runtime:
-  kind: claudecode
-  claudecode:
-    command: claude
-    permission_mode: dontAsk
-    mcp_strict: true
+  kind: codex
+  codex:
+    command: codex app-server
 ```
 
 You are working on a tracker ticket `{{ issue.identifier }}`

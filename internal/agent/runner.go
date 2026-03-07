@@ -9,6 +9,7 @@ import (
 	"baton/internal/config"
 	"baton/internal/prompt"
 	"baton/internal/runtime"
+	claudecoderuntime "baton/internal/runtime/claudecode"
 	"baton/internal/runtime/codexruntime"
 	opencoderuntime "baton/internal/runtime/opencode"
 	"baton/internal/tracker"
@@ -64,6 +65,8 @@ func newAgentRuntime(cfg *config.Config) runtime.Runtime {
 		return codexruntime.New(cfg)
 	case "opencode":
 		return opencoderuntime.New(cfg)
+	case "claudecode":
+		return claudecoderuntime.New(cfg)
 	default:
 		return codexruntime.New(cfg)
 	}
@@ -183,7 +186,7 @@ func (r *runner) buildTurnPrompt(issue tracker.Issue, opts RunOptions, turnNumbe
 
 	return fmt.Sprintf(`Continuation guidance:
 
-- The previous Codex turn completed normally, but the Linear issue is still in an active state.
+- The previous agent turn completed normally, but the tracker issue is still in an active state.
 - This is continuation turn #%d of %d for the current agent run.
 - Resume from the current workspace and workpad state instead of restarting from scratch.
 - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.

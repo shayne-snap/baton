@@ -1,6 +1,6 @@
 ---
 tracker:
-  kind: jira
+  kind: feishu
   routing:
     assignee: ""
     active_states:
@@ -21,17 +21,11 @@ tracker:
     merging: Ready to Merge
     rework: Rework
     done: Done
-  linear:
-    endpoint: "https://api.linear.app/graphql"
-    api_key: "$LINEAR_API_KEY"
-    project_slug: "baton-b6f0d2af0f10"
-  jira:
-    base_url: "https://linnana9808.atlassian.net"
-    project_key: "KAN"
-    auth:
-      type: "email_api_token"
-      email: "$JIRA_EMAIL"
-      api_token: "$JIRA_API_TOKEN"
+  feishu:
+    base_url: "$FEISHU_BASE_URL"
+    project_key: "$FEISHU_PROJECT_KEY"
+    app_id: "$FEISHU_APP_ID"
+    app_secret: "$FEISHU_APP_SECRET"
 polling:
   interval_ms: 5000
 workspace:
@@ -50,45 +44,24 @@ agent:
   max_concurrent_agents: 10
   max_turns: 20
 agent_runtime:
-  kind: opencode
-  opencode:
-    command: opencode serve
-    permission:
-      - permission: "*"
-        pattern: "*"
-        action: allow
-      - permission: "external_directory"
-        pattern: "*"
-        action: deny
-      - permission: "question"
-        pattern: "*"
-        action: allow
+  kind: codex
+  codex:
+    command: codex app-server
 ---
 
 Runtime configuration notes:
 
 - Baton now prefers `agent_runtime` for selecting the backend that executes agent turns.
-- Supported values today are `codex`, `opencode`, and `claudecode`.
+- Supported values today are `codex` and `opencode`.
 - The legacy top-level `codex:` block is still accepted for backward compatibility, but new workflows should use `agent_runtime`.
 
-Example `opencode` runtime configuration:
+Example `codex` runtime configuration:
 
 ```yaml
 agent_runtime:
-  kind: opencode
-  opencode:
-    command: opencode serve
-```
-
-Example `claudecode` runtime configuration:
-
-```yaml
-agent_runtime:
-  kind: claudecode
-  claudecode:
-    command: claude
-    permission_mode: dontAsk
-    mcp_strict: true
+  kind: codex
+  codex:
+    command: codex app-server
 ```
 
 You are working on a tracker ticket `{{ issue.identifier }}`
@@ -292,7 +265,7 @@ Use this only when completion is blocked by missing required tools or missing au
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
 12. Only then move issue to `{{ tracker.lifecycle.human_review }}`.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `{{ tracker.lifecycle.human_review }}` with the blocker brief and explicit unblock actions.
-    - If transition to `{{ tracker.lifecycle.human_review }}` fails (for example `jira_transition_not_found`), keep the issue in `{{ tracker.lifecycle.in_progress }}` and record the transition mismatch in the workpad.
+    - If transition to `{{ tracker.lifecycle.human_review }}` fails (for example `feishu_state_not_found`), keep the issue in `{{ tracker.lifecycle.in_progress }}` and record the transition mismatch in the workpad.
     - Never move the issue to `{{ tracker.lifecycle.done }}` as a fallback for a failed review-state transition.
 13. For `{{ tracker.lifecycle.todo }}` tickets that already had a PR attached at kickoff:
     - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).

@@ -15,9 +15,11 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 
 	cfg := mustConfig(t, map[string]any{
 		"tracker": map[string]any{
-			"kind":         "linear",
-			"api_key":      nil,
-			"project_slug": nil,
+			"kind": "linear",
+			"linear": map[string]any{
+				"api_key":      nil,
+				"project_slug": nil,
+			},
 		},
 		"polling": map[string]any{
 			"interval_ms": nil,
@@ -41,9 +43,11 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 
 	cfg = mustConfig(t, map[string]any{
 		"tracker": map[string]any{
-			"kind":         "linear",
-			"api_key":      "token",
-			"project_slug": nil,
+			"kind": "linear",
+			"linear": map[string]any{
+				"api_key":      "token",
+				"project_slug": nil,
+			},
 		},
 	}, "")
 	err := cfg.Validate()
@@ -51,9 +55,11 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 
 	cfg = mustConfig(t, map[string]any{
 		"tracker": map[string]any{
-			"kind":         "linear",
-			"api_key":      "token",
-			"project_slug": "project",
+			"kind": "linear",
+			"linear": map[string]any{
+				"api_key":      "token",
+				"project_slug": "project",
+			},
 		},
 		"codex": map[string]any{
 			"command": "",
@@ -64,42 +70,70 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 	}
 
 	cfg = mustConfig(t, map[string]any{
-		"tracker": map[string]any{"kind": "linear", "api_key": "token", "project_slug": "project"},
-		"codex":   map[string]any{"approval_policy": "definitely-not-valid"},
+		"tracker": map[string]any{
+			"kind": "linear",
+			"linear": map[string]any{
+				"api_key":      "token",
+				"project_slug": "project",
+			},
+		},
+		"codex": map[string]any{"approval_policy": "definitely-not-valid"},
 	}, "")
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected validate ok for free-form string approval policy, got %v", err)
 	}
 
 	cfg = mustConfig(t, map[string]any{
-		"tracker": map[string]any{"kind": "linear", "api_key": "token", "project_slug": "project"},
-		"codex":   map[string]any{"thread_sandbox": "unsafe-ish"},
+		"tracker": map[string]any{
+			"kind": "linear",
+			"linear": map[string]any{
+				"api_key":      "token",
+				"project_slug": "project",
+			},
+		},
+		"codex": map[string]any{"thread_sandbox": "unsafe-ish"},
 	}, "")
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected validate ok for free-form string thread sandbox, got %v", err)
 	}
 
 	cfg = mustConfig(t, map[string]any{
-		"tracker": map[string]any{"kind": "linear", "api_key": "token", "project_slug": "project"},
-		"codex":   map[string]any{"turn_sandbox_policy": map[string]any{"type": "workspaceWrite"}},
+		"tracker": map[string]any{
+			"kind": "linear",
+			"linear": map[string]any{
+				"api_key":      "token",
+				"project_slug": "project",
+			},
+		},
+		"codex": map[string]any{"turn_sandbox_policy": map[string]any{"type": "workspaceWrite"}},
 	}, "")
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("expected validate ok for object-form turn sandbox policy, got %v", err)
 	}
 
 	cfg = mustConfig(t, map[string]any{
-		"tracker": map[string]any{"kind": "linear", "api_key": "token", "project_slug": "project"},
-		"codex":   map[string]any{"approval_policy": 123},
+		"tracker": map[string]any{
+			"kind": "linear",
+			"linear": map[string]any{
+				"api_key":      "token",
+				"project_slug": "project",
+			},
+		},
+		"codex": map[string]any{"approval_policy": 123},
 	}, "")
-	err = cfg.Validate()
-	assertValidationCode(t, err, ErrInvalidCodexApproval)
+	assertValidationCode(t, cfg.Validate(), ErrInvalidCodexApproval)
 
 	cfg = mustConfig(t, map[string]any{
-		"tracker": map[string]any{"kind": "linear", "api_key": "token", "project_slug": "project"},
-		"codex":   map[string]any{"thread_sandbox": 123},
+		"tracker": map[string]any{
+			"kind": "linear",
+			"linear": map[string]any{
+				"api_key":      "token",
+				"project_slug": "project",
+			},
+		},
+		"codex": map[string]any{"thread_sandbox": 123},
 	}, "")
-	err = cfg.Validate()
-	assertValidationCode(t, err, ErrInvalidCodexThreadSandbox)
+	assertValidationCode(t, cfg.Validate(), ErrInvalidCodexThreadSandbox)
 
 	cfg = mustConfig(t, map[string]any{
 		"tracker": map[string]any{"kind": 123},
@@ -119,11 +153,7 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 			"opencode": map[string]any{
 				"command": "opencode serve --port 0",
 				"permission": []any{
-					map[string]any{
-						"permission": "*",
-						"pattern":    "*",
-						"action":     "allow",
-					},
+					map[string]any{"permission": "*", "pattern": "*", "action": "allow"},
 				},
 			},
 		},
@@ -134,9 +164,7 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 	if got := cfg.OpencodeCommand(); got != "opencode serve --port 0" {
 		t.Fatalf("opencode command mismatch: %q", got)
 	}
-	assertMapListEqual(t, cfg.OpencodePermissionRules(), []map[string]any{
-		{"permission": "*", "pattern": "*", "action": "allow"},
-	})
+	assertMapListEqual(t, cfg.OpencodePermissionRules(), []map[string]any{{"permission": "*", "pattern": "*", "action": "allow"}})
 
 	cfg = mustConfig(t, map[string]any{
 		"tracker": map[string]any{"kind": "memory"},
@@ -153,9 +181,194 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 	if got := cfg.OpencodeCommand(); got != "opencode serve" {
 		t.Fatalf("expected default opencode command, got %q", got)
 	}
-	if got := cfg.OpencodePermissionRules(); got != nil {
-		t.Fatalf("expected no explicit opencode permission rules, got %#v", got)
+}
+
+func TestConfigJiraAndFeishuValidation(t *testing.T) {
+	t.Parallel()
+
+	jiraCfg := mustConfig(t, map[string]any{
+		"tracker": map[string]any{
+			"kind": "jira",
+			"jira": map[string]any{
+				"base_url":    "https://example.atlassian.net",
+				"project_key": "BAT",
+				"auth": map[string]any{
+					"type":      "email_api_token",
+					"email":     "bot@example.com",
+					"api_token": "jira-token",
+				},
+			},
+		},
+	}, "")
+	if err := jiraCfg.Validate(); err != nil {
+		t.Fatalf("expected valid jira config, got %v", err)
 	}
+
+	badJira := mustConfig(t, map[string]any{
+		"tracker": map[string]any{"kind": "jira"},
+	}, "")
+	assertValidationCode(t, badJira.Validate(), ErrMissingJiraBaseURL)
+
+	feishuCfg := mustConfig(t, map[string]any{
+		"tracker": map[string]any{
+			"kind": "feishu",
+			"feishu": map[string]any{
+				"base_url":    "https://open.feishu.cn",
+				"project_key": "BAT",
+				"app_id":      "app-id",
+				"app_secret":  "app-secret",
+			},
+		},
+	}, "")
+	if err := feishuCfg.Validate(); err != nil {
+		t.Fatalf("expected valid feishu config, got %v", err)
+	}
+
+	badFeishu := mustConfig(t, map[string]any{
+		"tracker": map[string]any{"kind": "feishu"},
+	}, "")
+	assertValidationCode(t, badFeishu.Validate(), ErrMissingFeishuBaseURL)
+
+	prevBaseURL := os.Getenv("FEISHU_BASE_URL")
+	prevProjectKey := os.Getenv("FEISHU_PROJECT_KEY")
+	prevAppID := os.Getenv("FEISHU_APP_ID")
+	prevAppSecret := os.Getenv("FEISHU_APP_SECRET")
+	defer restoreEnv("FEISHU_BASE_URL", prevBaseURL)
+	defer restoreEnv("FEISHU_PROJECT_KEY", prevProjectKey)
+	defer restoreEnv("FEISHU_APP_ID", prevAppID)
+	defer restoreEnv("FEISHU_APP_SECRET", prevAppSecret)
+	if err := os.Setenv("FEISHU_BASE_URL", "https://open.feishu.cn"); err != nil {
+		t.Fatalf("set FEISHU_BASE_URL: %v", err)
+	}
+	if err := os.Setenv("FEISHU_PROJECT_KEY", "BAT"); err != nil {
+		t.Fatalf("set FEISHU_PROJECT_KEY: %v", err)
+	}
+	if err := os.Setenv("FEISHU_APP_ID", "app-id-from-env"); err != nil {
+		t.Fatalf("set FEISHU_APP_ID: %v", err)
+	}
+	if err := os.Setenv("FEISHU_APP_SECRET", "app-secret-from-env"); err != nil {
+		t.Fatalf("set FEISHU_APP_SECRET: %v", err)
+	}
+	envFeishuCfg := mustConfig(t, map[string]any{
+		"tracker": map[string]any{
+			"kind": "feishu",
+			"feishu": map[string]any{
+				"base_url":    "$FEISHU_BASE_URL",
+				"project_key": "$FEISHU_PROJECT_KEY",
+				"app_id":      "$FEISHU_APP_ID",
+				"app_secret":  "$FEISHU_APP_SECRET",
+			},
+		},
+	}, "")
+	if err := envFeishuCfg.Validate(); err != nil {
+		t.Fatalf("expected env-backed feishu config to validate, got %v", err)
+	}
+	if got := envFeishuCfg.FeishuBaseURL(); got != "https://open.feishu.cn" {
+		t.Fatalf("unexpected feishu base url from env: %q", got)
+	}
+	if got := envFeishuCfg.FeishuProjectKey(); got != "BAT" {
+		t.Fatalf("unexpected feishu project key from env: %q", got)
+	}
+	if got := envFeishuCfg.FeishuAppID(); got != "app-id-from-env" {
+		t.Fatalf("unexpected feishu app id from env: %q", got)
+	}
+	if got := envFeishuCfg.FeishuAppSecret(); got != "app-secret-from-env" {
+		t.Fatalf("unexpected feishu app secret from env: %q", got)
+	}
+}
+
+func TestClaudeCodeRuntimeConfigDefaultsAndValidation(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustConfig(t, map[string]any{
+		"tracker": map[string]any{"kind": "memory"},
+		"agent_runtime": map[string]any{
+			"kind":       "claudecode",
+			"claudecode": map[string]any{},
+		},
+	}, "")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected claudecode validate ok, got %v", err)
+	}
+	if got := cfg.AgentRuntimeKind(); got != "claudecode" {
+		t.Fatalf("unexpected runtime kind: %q", got)
+	}
+	if got := cfg.ClaudeCodeCommand(); got != "claude" {
+		t.Fatalf("unexpected default Claude command: %q", got)
+	}
+	if got := cfg.ClaudeCodePermissionMode(); got != "dontAsk" {
+		t.Fatalf("unexpected default permission mode: %q", got)
+	}
+	if !cfg.ClaudeCodeMCPStrict() {
+		t.Fatal("expected strict MCP config by default")
+	}
+	if !cfg.ClaudeCodeSessionPersistence() {
+		t.Fatal("expected session persistence by default")
+	}
+
+	cfg = mustConfig(t, map[string]any{
+		"tracker": map[string]any{"kind": "memory"},
+		"agent_runtime": map[string]any{
+			"kind": "claudecode",
+			"claudecode": map[string]any{
+				"command":              "claude --verbose",
+				"permission_mode":      "acceptEdits",
+				"allowed_tools":        "Read,Write",
+				"disallowed_tools":     []any{"Bash"},
+				"model":                "claude-sonnet-4-5",
+				"append_system_prompt": "Follow tracker state exactly.",
+				"mcp_strict":           false,
+				"session_persistence":  false,
+			},
+		},
+	}, "")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected explicit claudecode config validate ok, got %v", err)
+	}
+	if got := cfg.ClaudeCodeCommand(); got != "claude --verbose" {
+		t.Fatalf("unexpected configured command: %q", got)
+	}
+	if got := cfg.ClaudeCodePermissionMode(); got != "acceptEdits" {
+		t.Fatalf("unexpected permission mode: %q", got)
+	}
+	assertStringSliceEqual(t, cfg.ClaudeCodeAllowedTools(), []string{"Read", "Write"})
+	assertStringSliceEqual(t, cfg.ClaudeCodeDisallowedTools(), []string{"Bash"})
+	if got := cfg.ClaudeCodeModel(); got != "claude-sonnet-4-5" {
+		t.Fatalf("unexpected model: %q", got)
+	}
+	if got := cfg.ClaudeCodeAppendSystemPrompt(); got != "Follow tracker state exactly." {
+		t.Fatalf("unexpected append system prompt: %q", got)
+	}
+	if cfg.ClaudeCodeMCPStrict() {
+		t.Fatal("expected strict MCP override to be false")
+	}
+	if cfg.ClaudeCodeSessionPersistence() {
+		t.Fatal("expected session persistence override to be false")
+	}
+
+	badCfg := mustConfig(t, map[string]any{
+		"tracker": map[string]any{"kind": "memory"},
+		"agent_runtime": map[string]any{
+			"kind": "claudecode",
+			"claudecode": map[string]any{
+				"permission_mode": "definitely-not-valid",
+			},
+		},
+	}, "")
+	assertValidationCode(t, badCfg.Validate(), ErrInvalidClaudeCodePermission)
+}
+
+func TestConfigRejectsLegacyTrackerLayout(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustConfigRaw(t, map[string]any{
+		"tracker": map[string]any{
+			"kind":         "linear",
+			"api_key":      "token",
+			"project_slug": "project",
+		},
+	}, "")
+	assertValidationCode(t, cfg.Validate(), ErrMissingTrackerLifecycleState)
 }
 
 func TestConfigEnvResolution(t *testing.T) {
@@ -170,9 +383,11 @@ func TestConfigEnvResolution(t *testing.T) {
 
 	cfg := mustConfig(t, map[string]any{
 		"tracker": map[string]any{
-			"kind":         "linear",
-			"api_key":      nil,
-			"project_slug": "project",
+			"kind": "linear",
+			"linear": map[string]any{
+				"api_key":      nil,
+				"project_slug": "project",
+			},
 		},
 	}, "")
 
@@ -185,9 +400,11 @@ func TestConfigEnvResolution(t *testing.T) {
 
 	cfg = mustConfig(t, map[string]any{
 		"tracker": map[string]any{
-			"kind":         "linear",
-			"api_key":      "$LINEAR_API_KEY",
-			"project_slug": "project",
+			"kind": "linear",
+			"linear": map[string]any{
+				"api_key":      "$LINEAR_API_KEY",
+				"project_slug": "project",
+			},
 		},
 	}, "")
 
@@ -238,8 +455,10 @@ func TestStateLimitAndCSVParsing(t *testing.T) {
 
 	cfg := mustConfig(t, map[string]any{
 		"tracker": map[string]any{
-			"kind":          "memory",
-			"active_states": "Todo,  Review,",
+			"kind": "memory",
+			"routing": map[string]any{
+				"active_states": "Todo,  Review,",
+			},
 		},
 		"agent": map[string]any{
 			"max_concurrent_agents": 10,
@@ -268,11 +487,49 @@ func TestStateLimitAndCSVParsing(t *testing.T) {
 
 	cfg = mustConfig(t, map[string]any{
 		"tracker": map[string]any{
-			"kind":          "memory",
-			"active_states": ",",
+			"kind": "memory",
+			"routing": map[string]any{
+				"active_states": ",",
+			},
 		},
 	}, "")
 	assertStringSliceEqual(t, cfg.LinearActiveStates(), []string{"Todo", "In Progress"})
+}
+
+func TestTrackerAssigneeExplicitEmptyDisablesEnvFallback(t *testing.T) {
+	t.Setenv("BATON_ASSIGNEE", "me")
+	t.Setenv("LINEAR_ASSIGNEE", "legacy-me")
+
+	cfg := mustConfig(t, map[string]any{
+		"tracker": map[string]any{
+			"kind": "jira",
+			"routing": map[string]any{
+				"assignee": "",
+			},
+			"jira": map[string]any{
+				"base_url":    "https://example.atlassian.net",
+				"project_key": "KAN",
+				"auth": map[string]any{
+					"type":      "email_api_token",
+					"email":     "jira@example.com",
+					"api_token": "token",
+				},
+			},
+			"lifecycle": map[string]any{
+				"backlog":      "Backlog",
+				"todo":         "To Do",
+				"in_progress":  "In Progress",
+				"human_review": "In Review",
+				"merging":      "Ready to Merge",
+				"rework":       "Rework",
+				"done":         "Done",
+			},
+		},
+	}, "")
+
+	if got := cfg.TrackerAssignee(); got != "" {
+		t.Fatalf("expected explicit empty assignee to disable fallback, got %q", got)
+	}
 }
 
 func TestWorkflowPromptFallbackAndCodexDefaults(t *testing.T) {
@@ -340,7 +597,7 @@ func TestReloadFromDiskKeepsLastKnownGoodOnInvalidWorkflow(t *testing.T) {
 	dir := t.TempDir()
 	workflowPath := filepath.Join(dir, "WORKFLOW.md")
 
-	initial := "---\ntracker:\n  kind: memory\npolling:\n  interval_ms: 30000\n---\ninitial prompt\n"
+	initial := "---\ntracker:\n  kind: memory\n  lifecycle:\n    backlog: Backlog\n    todo: Todo\n    in_progress: In Progress\n    human_review: In Review\n    merging: Merging\n    rework: Rework\n    done: Done\npolling:\n  interval_ms: 30000\n---\ninitial prompt\n"
 	if err := os.WriteFile(workflowPath, []byte(initial), 0o644); err != nil {
 		t.Fatalf("write initial workflow: %v", err)
 	}
@@ -354,7 +611,7 @@ func TestReloadFromDiskKeepsLastKnownGoodOnInvalidWorkflow(t *testing.T) {
 		t.Fatalf("FromWorkflow failed: %v", err)
 	}
 
-	updated := "---\ntracker:\n  kind: memory\npolling:\n  interval_ms: 1200\n---\nupdated prompt\n"
+	updated := "---\ntracker:\n  kind: memory\n  lifecycle:\n    backlog: Backlog\n    todo: Todo\n    in_progress: In Progress\n    human_review: In Review\n    merging: Merging\n    rework: Rework\n    done: Done\npolling:\n  interval_ms: 1200\n---\nupdated prompt\n"
 	if err := os.WriteFile(workflowPath, []byte(updated), 0o644); err != nil {
 		t.Fatalf("write updated workflow: %v", err)
 	}
@@ -391,6 +648,21 @@ func mustConfig(t *testing.T, configMap map[string]any, prompt string) *Config {
 	cfg, err := FromWorkflow(
 		filepath.Join(t.TempDir(), "WORKFLOW.md"),
 		&workflow.Definition{
+			Config:         withRequiredTrackerDefaults(configMap),
+			PromptTemplate: prompt,
+		},
+	)
+	if err != nil {
+		t.Fatalf("FromWorkflow failed: %v", err)
+	}
+	return cfg
+}
+
+func mustConfigRaw(t *testing.T, configMap map[string]any, prompt string) *Config {
+	t.Helper()
+	cfg, err := FromWorkflow(
+		filepath.Join(t.TempDir(), "WORKFLOW.md"),
+		&workflow.Definition{
 			Config:         configMap,
 			PromptTemplate: prompt,
 		},
@@ -399,6 +671,46 @@ func mustConfig(t *testing.T, configMap map[string]any, prompt string) *Config {
 		t.Fatalf("FromWorkflow failed: %v", err)
 	}
 	return cfg
+}
+
+func withRequiredTrackerDefaults(configMap map[string]any) map[string]any {
+	merged := map[string]any{}
+	for key, value := range configMap {
+		merged[key] = value
+	}
+
+	trackerRaw, _ := merged["tracker"].(map[string]any)
+	if trackerRaw == nil {
+		trackerRaw = map[string]any{}
+	}
+	tracker := cloneTestMap(trackerRaw)
+	if _, ok := tracker["lifecycle"]; !ok {
+		tracker["lifecycle"] = map[string]any{
+			"backlog":      "Backlog",
+			"todo":         "Todo",
+			"in_progress":  "In Progress",
+			"human_review": "In Review",
+			"merging":      "Merging",
+			"rework":       "Rework",
+			"done":         "Done",
+		}
+	}
+	if _, ok := tracker["routing"]; !ok {
+		tracker["routing"] = map[string]any{
+			"active_states":   []any{"Todo", "In Progress"},
+			"terminal_states": []any{"Closed", "Cancelled", "Canceled", "Duplicate", "Done"},
+		}
+	}
+	merged["tracker"] = tracker
+	return merged
+}
+
+func cloneTestMap(input map[string]any) map[string]any {
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func assertValidationCode(t *testing.T, err error, expectedCode error) {

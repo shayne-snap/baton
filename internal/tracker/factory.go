@@ -10,8 +10,14 @@ func NewClient(cfg *config.Config) Client {
 	if cfg == nil {
 		return NewMemoryClient(cfg)
 	}
-	if strings.EqualFold(strings.TrimSpace(cfg.TrackerKind()), "memory") {
+	switch strings.ToLower(strings.TrimSpace(cfg.TrackerKind())) {
+	case "memory":
 		return NewMemoryClient(cfg)
+	case "jira":
+		return NewJiraClient(cfg)
+	case "feishu":
+		return NewFeishuClient(cfg)
+	default:
+		return NewLinearClient(cfg)
 	}
-	return NewLinearClient(cfg)
 }

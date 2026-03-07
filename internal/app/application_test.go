@@ -46,7 +46,7 @@ func TestApplicationWorkflowReloadKeepsLastKnownGoodOnInvalidUpdate(t *testing.T
 	t.Parallel()
 
 	workflowPath := filepath.Join(t.TempDir(), "WORKFLOW.md")
-	writeWorkflow(t, workflowPath, "---\ntracker:\n  kind: memory\npolling:\n  interval_ms: 30000\nobservability:\n  dashboard_enabled: false\n---\ninitial prompt\n")
+	writeWorkflow(t, workflowPath, "---\ntracker:\n  kind: memory\n  lifecycle:\n    backlog: Backlog\n    todo: Todo\n    in_progress: In Progress\n    human_review: In Review\n    merging: Merging\n    rework: Rework\n    done: Done\npolling:\n  interval_ms: 30000\nobservability:\n  dashboard_enabled: false\n---\ninitial prompt\n")
 
 	logsRoot := t.TempDir()
 	app, err := New(Options{
@@ -71,7 +71,7 @@ func TestApplicationWorkflowReloadKeepsLastKnownGoodOnInvalidUpdate(t *testing.T
 		return app.config.PollIntervalMS() == 30_000
 	})
 
-	writeWorkflow(t, workflowPath, "---\ntracker:\n  kind: memory\npolling:\n  interval_ms: 1200\nobservability:\n  dashboard_enabled: false\n---\nupdated prompt\n")
+	writeWorkflow(t, workflowPath, "---\ntracker:\n  kind: memory\n  lifecycle:\n    backlog: Backlog\n    todo: Todo\n    in_progress: In Progress\n    human_review: In Review\n    merging: Merging\n    rework: Rework\n    done: Done\npolling:\n  interval_ms: 1200\nobservability:\n  dashboard_enabled: false\n---\nupdated prompt\n")
 	assertEventually(t, 8*time.Second, func() bool {
 		return app.config.PollIntervalMS() == 1200 && app.config.WorkflowPrompt() == "updated prompt"
 	})
