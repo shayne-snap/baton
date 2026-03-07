@@ -42,6 +42,9 @@ go build -o bin/baton ./cmd/baton
     仍处于实验阶段；启动 Baton 时必须显式提供。
 - Baton 会注册信号处理器，因此 `Ctrl+C` 可以优雅停止 agents 并关闭 Codex 会话。
 
+## 开发文档
+- 参见 [DEVELOPMENT.md](DEVELOPMENT.md)，其中包含本地开发环境准备、`agent_runtime` 运行时配置说明，以及日常开发/测试流程。
+
 ## 可观测性与测试
 - 日志会写入配置的日志根目录（默认：`logs/`），每次 agent 调用都会记录工作区路径与工作流元信息。
 - 可选 HTTP API 暴露 `/api/v1/state`、`/api/v1/<issue_identifier>` 与 `/api/v1/refresh`，用于排障。
