@@ -50,6 +50,9 @@ go build -o bin/baton ./cmd/baton
     experimental nature of the agent runner and is required to start Baton.
 - Baton installs signal handlers so `Ctrl+C` gracefully stops agents and closes Codex sessions.
 
+## Development
+- See [DEVELOPMENT.md](DEVELOPMENT.md) for local setup, runtime configuration (`agent_runtime`), and the day-to-day development/testing loop.
+
 ## Observability & Testing
 - Logs land under the configured logs root (default: `logs/`) and include workspace paths and
   workflow metadata for each agent invocation.
