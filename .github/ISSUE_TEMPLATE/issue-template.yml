@@ -1,0 +1,86 @@
+name: General issue
+description: Report a bug, request a feature, or ask for an improvement.
+title: "[Issue] "
+labels:
+  - needs-triage
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Briefly describe the issue or request.
+      placeholder: A short summary of the problem or idea.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Type
+      description: Select the type that best matches this issue.
+      options:
+        - Bug report
+        - Feature request
+        - Improvement
+        - Documentation
+        - Question
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What were you trying to do, and why?
+      placeholder: Share background and goals.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: If this is a bug, list exact steps to reproduce.
+      placeholder: |
+        1. Run ...
+        2. Configure ...
+        3. Observe ...
+      render: bash
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe the expected behavior or desired outcome.
+      placeholder: Explain what should happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Describe what actually happened.
+      placeholder: Include symptoms, errors, or incorrect output.
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Paste relevant logs, stack traces, or command output.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, version, and runtime details.
+      placeholder: "e.g. macOS 14.6, Go 1.24, Baton main@abc1234"
+    validations:
+      required: false
